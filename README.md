@@ -13,4 +13,11 @@ It offers the following features:
 ## Installation of Python package
 - Choose a working directory
 - If it does not have a pipenv yet: `touch Pipfile`
-- `pipenv install git+https://github.com/sebastien-riou/leancom.git`
+- `pipenv install git+https://github.com/sebastien-riou/lean-com.git`
+
+It can be added to an existing Pipfile like that:
+````
+leancom = {git = "git+https://github.com/sebastien-riou/lean-com.git"}
+````
+
+Alternatively you can use this repo as a submodule.
