@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -ex
+
+#use like this: ./testit <preset name>
+#for example ./testit minSizeRel
+
+
+./buildit nucleo-u5a5zj-q.cmake $1
+./buildit litex.cmake $1
+renode-test mytest.robot --variable PWD_PATH:"${PWD}"

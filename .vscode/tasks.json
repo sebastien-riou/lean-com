@@ -1,0 +1,129 @@
+{
+    "version": "2.0.0",
+    "windows": {
+        "options": {
+            "shell": {
+                "executable": "cmd.exe",
+                "args": ["/d", "/c"]
+            }
+        }
+    },
+    "tasks": [
+        {
+            "label": "Build U5A5",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/examples/basic"
+            },
+            "command": "./buildit_env",
+            "args": [
+                "nucleo-u5a5zj-q.cmake",
+                "debug"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Renode U5A5",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/examples/basic"
+            },
+            "command": "renode",
+            "args": [
+                "target/stm32/nucleo-u5a5.resc"
+            ],
+            "dependsOn": [
+                "Build application"
+            ],
+            "isBackground": true,
+            "problemMatcher": {
+                "source": "Renode",
+                "pattern": {
+                    "regexp": ""
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "Renode, version .*",
+                    "endsPattern": ".*GDB server with all CPUs started on port.*"
+                }
+            },
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Build RV32IC",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/examples/basic"
+            },
+            "command": "./buildit_env",
+            "args": [
+                "litex.cmake",
+                "debug"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Renode RV32IC",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/examples/basic"
+            },
+            "command": "renode",
+            "args": [
+                "target/litex/litex.resc"
+            ],
+            "dependsOn": [
+                "Build application"
+            ],
+            "isBackground": true,
+            "problemMatcher": {
+                "source": "Renode",
+                "pattern": {
+                    "regexp": ""
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "Renode, version .*",
+                    "endsPattern": ".*GDB server with all CPUs started on port.*"
+                }
+            },
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Close Renode",
+            "command": "echo ${input:terminate}",
+            "type": "shell",
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "terminate",
+            "type": "command",
+            "command": "workbench.action.tasks.terminate",
+            "args": "terminateAll"
+        }
+    ]
+}

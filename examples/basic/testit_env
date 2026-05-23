@@ -1,0 +1,12 @@
+#!/bin/bash
+
+set -ex
+
+#use like this: ./testit_env <preset name>
+#for example ./testit_env minSizeRel
+
+pushd ../..
+pipenv run ./build
+popd
+pipenv run pip install --force-reinstall ../../dist/leancom*.whl
+pipenv run ./testit $*

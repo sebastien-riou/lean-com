@@ -1,0 +1,8 @@
+#!/bin/bash
+
+set -ex
+pushd ../..
+pipenv run ./build
+popd
+pipenv run pip install --force-reinstall ../../dist/leancom*.whl
+pipenv run ./buildit $*

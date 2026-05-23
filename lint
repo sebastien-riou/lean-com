@@ -1,0 +1,9 @@
+#!/bin/bash
+
+set -e
+
+echo "Running 'black'"
+black .
+
+echo "Running 'ruff'"
+ruff check --fix

@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -e
+
+if [ -z "$1" ]
+then
+      py=python3
+else
+      py=$1
+fi
+
+rm -rf dist
+git fetch --all
+git status
+$py -m build
+
+# we publish to pypi using github action, see .github/workflows/build.yml

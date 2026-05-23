@@ -1,0 +1,42 @@
+[envs.default]
+dependencies = [
+  "coverage[toml]",
+  "pytest"
+]
+[envs.default.scripts]
+test = "pytest {args:test}"
+test-cov = "coverage run -m pytest {args:test}"
+cov-report = [
+  "- coverage combine",
+  "coverage report --show-missing",
+]
+cov = [
+  "test-cov",
+  "cov-report",
+]
+
+[[envs.all.matrix]]
+python = ["3.10"]
+
+[envs.lint]
+detached = true
+dependencies = [
+  "black>=22.10.0",
+  "mypy>=0.991",
+  "ruff>=0.0.166",
+]
+[envs.lint.scripts]
+typing = "mypy --install-types --non-interactive {args: usbman }"
+style = [
+  "ruff check {args:usbman}",
+  "black --check --diff {args:usbman}",
+]
+fmt = [
+  "black {args:usbman}",
+  "ruff check --fix {args:usbman}",
+  "style",
+]
+all = [
+  "style",
+  "typing",
+]
