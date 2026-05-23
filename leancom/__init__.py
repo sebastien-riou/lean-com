@@ -128,3 +128,20 @@ class Device(object):
             self.rxbuf += out[-excess:]
         return out[:size]
     
+    def write(self, data):
+        self.tx(data)
+
+    def read(self, size=1):
+        return self.rx(size)
+    
+    def flush(self):
+        self.dev.flush()
+    
+    def readline(self):
+        out = bytearray()
+        while True:
+            c = self.rx(1)
+            if c == b'\n':
+                break
+            out += c
+        return bytes(out)
