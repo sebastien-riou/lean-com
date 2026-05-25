@@ -35,8 +35,7 @@ void _leancom_error_handler(uint32_t err_code){
 #if HAS_PRINTF
 #include <stdio.h>
 int __io_putchar(int ch){
-	leancom_putchar(ch);
-	return ch;
+	return leancom_putchar(ch);
 }
 #endif
 
