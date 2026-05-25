@@ -5,6 +5,7 @@ import leancom
 from pysatl import Utils
 import serial
 
+
 def main():
     scriptname = os.path.basename(__file__)
     parser = argparse.ArgumentParser(scriptname)
@@ -14,7 +15,7 @@ def main():
     parser.add_argument('commands', help='rx<n bytes> or tx<hex data>', nargs='*', type=str)
 
     args = parser.parse_args()
-    
+
     logformat = '%(asctime)s.%(msecs)03d %(levelname)s:\t%(message)s'
     logdatefmt = '%Y-%m-%d %H:%M:%S'
     logging.basicConfig(level=args.log_level, format=logformat, datefmt=logdatefmt)
@@ -26,7 +27,7 @@ def main():
         device.synchronize()
         for command in args.commands:
             logging.debug(command)
-            action=command[:2]
+            action = command[:2]
             match action:
                 case 'rx':
                     size = int(command[2:])
