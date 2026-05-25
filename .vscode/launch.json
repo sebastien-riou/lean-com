@@ -6,7 +6,7 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: Module",
+            "name": "Python basic",
             "type": "debugpy",
             "request": "launch",
             "module": "leancom.cli",

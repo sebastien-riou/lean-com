@@ -32,6 +32,14 @@ void _leancom_error_handler(uint32_t err_code){
   throw_exception(err_code);
 }
 
+#if HAS_PRINTF
+#include <stdio.h>
+int __io_putchar(int ch){
+	leancom_putchar(ch);
+	return ch;
+}
+#endif
+
 #include "ui.h"
 const char*version = xstr(GIT_VERSION);
 
@@ -44,12 +52,16 @@ volatile uint8_t mask = 0;
 void basic_test(){
   leancom_synchronize();
   leancom_print("hello world!\n");
+  #if HAS_PRINTF
+  printf("hello world from printf over lean-com!\n");
+  #endif
   uint8_t buf[4] = {0};
   leancom_rx_data(buf,sizeof(buf));
   for(unsigned int i=0;i<sizeof(buf);i++){
     buf[i] = ~buf[i];
   }
   leancom_tx_data(buf,sizeof(buf));
+  leancom_print("basic_test done.\n");
 }
 
 int main(int argc, const char*argv[]){

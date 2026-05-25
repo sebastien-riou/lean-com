@@ -67,6 +67,11 @@ static void leancom_print(const char*s){
 	_leancom_tx_packet(COM_PRINT,(const uint8_t*)s,size);
 }
 
+//function to override standard putchar if user wants to use printf
+static int leancom_putchar(char c){
+	_leancom_tx_packet(COM_PRINT,(const uint8_t*)&c,1);
+}
+
 static void leancom_tx_data(const void*data, uint32_t size){
 	uint8_t*data8=(uint8_t*)data;
 	while(size > COM_PACKET_MAX_DATA_SIZE){
