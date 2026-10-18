@@ -28,7 +28,11 @@ dependencies = [
 ]
 [project.optional-dependencies]
 doc = [
-  "sphinx",
+  "sphinx>=7.2",
+  "sphinx-rtd-theme>=2.0",
+]
+test = [
+  "pytest>=7",
 ]
 [project.urls]
 "Homepage" = "https://github.com/sebastien-riou/leancom"
@@ -100,6 +104,15 @@ ban-relative-imports = "all"
 "test/**/*" = ["TID252", "S101", "T201"]
 # CLI can print
 "leancom/cli.py" = ["T201","I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = ["."]
+addopts = "--strict-markers -ra"
+markers = [
+  "native: needs a C compiler and POSIX pipes/ptys (deselect with -m 'not native')",
+  "needs_timeout: ends only thanks to the device timeout; skipped by --debug-friendly",
+]
 
 [tool.mypy]
 disallow_untyped_defs = false

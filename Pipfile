@@ -13,6 +13,7 @@ ruff = "*"
 black = "*"
 build = "*"
 pyinstaller = "*"
+pytest = "*"
 
 [requires]
 python_version = "3.12"

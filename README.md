@@ -24,6 +24,12 @@ Alternatively you can use this repo as a submodule.
 
 ## Development / test
 
+### Run the test suite
+It needs only Python and a C compiler, no board:
+````
+./testit
+````
+
 ### Build embedded code
 ````
 cd examples/basic

@@ -1,3 +1,5 @@
+"""Command line tool exchanging data with a lean-com device over a serial port."""
+
 import argparse
 import logging
 import os
@@ -7,6 +9,7 @@ import serial
 
 
 def main():
+    """Entry point of the ``leancom`` command."""
     scriptname = os.path.basename(__file__)
     parser = argparse.ArgumentParser(scriptname)
     levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
