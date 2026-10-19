@@ -1,7 +1,8 @@
 *** Comments ***
 The firmware runs in Renode with its UART on a pseudo-terminal. The test plays the host by running the
 leancom command line tool on that pseudo-terminal, and checks its output: the session described in the
-README, once with the device started first and once with the host started first.
+README, on the STM32U5 once with the device started first and once with the host started first, then on
+LiteX.
 
 Run it from examples/basic: pipenv install (once), then pipenv run ./testit <preset>.
 HOST_TIMEOUT limits the host session (default 60 s); pipenv run ./testit debug --variable
@@ -76,7 +77,6 @@ Host starts first on stm32u5a5
     Host Output Should Be The README Session    ${host}
 
 Device starts first on litex
-    Skip
     Create Machine    litex/litex.repl    build-litex.cmake    uart
     Start Emulation
     ${host}=    Start Host

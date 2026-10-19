@@ -5,6 +5,12 @@
 .global _estack
 _start:
 
+        # setup the global pointer, without relaxation since gp is not set yet
+        .option push
+        .option norelax
+        la      gp, __global_pointer$
+        .option pop
+
         # setup machine trap vector
 1:      auipc   t0, %pcrel_hi(mtvec_interrupt_handler)  # load mtvec_interrupt_handler(hi)
         addi    t0, t0, %pcrel_lo(1b)                   # load mtvec_interrupt_handler(lo)

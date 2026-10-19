@@ -6,6 +6,7 @@ set(linker_script_SRC ${CMAKE_CURRENT_SOURCE_DIR}/target/litex/litex_FLASH.ld)
 set(target_SRCS 
 	${CMAKE_CURRENT_SOURCE_DIR}/target/litex/startup.s
 	${CMAKE_CURRENT_SOURCE_DIR}/target/litex/litex.c
+	${CMAKE_CURRENT_SOURCE_DIR}/target/litex/syscall.c
 )
 
 set(target_include_c_DIRS 

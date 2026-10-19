@@ -24,7 +24,6 @@ SECTIONS
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
     *(.eh_frame)
-    __global_pointer$ = .;
 
     KEEP (*(.init))
     KEEP (*(.fini))
@@ -37,6 +36,8 @@ SECTIONS
   {
     *(.rodata)         /* .rodata sections (constants, strings, etc.) */
     *(.rodata*)        /* .rodata* sections (constants, strings, etc.) */
+    *(.srodata)        /* small constants */
+    *(.srodata*)
   } >FLASH
 
   /* Used by the startup to initialize data */
@@ -51,6 +52,14 @@ SECTIONS
     *(.RamFunc)        /* .RamFunc sections */
     *(.RamFunc*)       /* .RamFunc* sections */
 
+    /* Small data, reached through gp: startup.s loads it with __global_pointer$, which covers the
+       2 KiB on each side, .sbss included */
+    . = ALIGN(4);
+    __global_pointer$ = . + 0x800;
+    *(.sdata)
+    *(.sdata*)
+
+    . = ALIGN(4);      /* the startup copies words */
     _edata = .;        /* define a global symbol at data end */
   } >RAM AT> FLASH
 
@@ -60,10 +69,13 @@ SECTIONS
     /* This is used by the startup in order to initialize the .bss section */
     _sbss = .;         /* define a global symbol at bss start */
     __bss_start = _sbss;
+    *(.sbss)           /* small data, next to .sdata for gp */
+    *(.sbss*)
     *(.bss)
     *(.bss*)
     *(COMMON)
 
+    . = ALIGN(4);      /* the startup clears words */
     _ebss = .;         /* define a global symbol at bss end */
     __bss_end = _ebss;
   } >RAM

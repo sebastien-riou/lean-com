@@ -38,13 +38,12 @@ The same session runs automatically in Renode, from ``examples/basic``:
 
 It builds the firmware, then runs ``mytest.robot`` with ``renode-test``: Renode runs the
 firmware with its UART on a pseudo-terminal, and the test runs ``leancom`` on it and checks
-the output above, once with the device started first and once with the host started
-first. It needs Renode and the cross toolchains in the ``PATH``. ``renode-test`` and the test
+the output above: on the STM32U5 once with the device started first and once with the
+host started first, then on LiteX. It needs Renode and the cross toolchains in the ``PATH``. ``renode-test`` and the test
 run in the Python environment of the example's ``Pipfile``, set up by ``pipenv install``;
 ``./testit_env debug`` runs the same test after building the package as a wheel and
 installing it in that environment. The host session is limited to 60 seconds; ``pipenv run
-./testit debug --variable HOST_TIMEOUT:none`` removes the limit, for single-step debugging. The LiteX test case is
-skipped, and the LiteX firmware is built without ``printf`` (see ``ISSUES.md``).
+./testit debug --variable HOST_TIMEOUT:none`` removes the limit, for single-step debugging.
 
 Tests
 -----

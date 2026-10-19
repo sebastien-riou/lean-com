@@ -22,7 +22,7 @@ corrupts data, **Low** is minor or affects tooling only.
 | 11 | VS Code configurations refer to missing items             | Low      | yes    |
 | 12 | The Renode test waits for output the firmware never sends | Low      | yes    |
 | 13 | Leftovers from the project template                       | Low      | yes    |
-| 14 | The LiteX firmware does not link with `printf`            | Low      | no     |
+| 14 | The LiteX firmware does not link with `printf`            | Low      | yes    |
 
 ## Protocol and libraries
 
@@ -214,21 +214,31 @@ email in `pyproject.toml` was removed: an author entry needs only a name. The un
 `examples/basic/expected_output.txt` (the text of *Le Petit Prince*) and its checksum
 file were deleted (commit 650451f).
 
-### 14. The LiteX firmware does not link with `printf` (Low)
+### 14. The LiteX firmware does not link with `printf` (Low, fixed)
 
 **Where:** [examples/basic/target/litex/](examples/basic/target/litex/), with `HAS_PRINTF=1`,
 the default of [examples/basic/CMakeLists.txt](examples/basic/CMakeLists.txt).
 
-**What happens:** since `printf` was added to the example, newlib's stdio needs the system
-calls `_write`, `_read`, `_sbrk`, `_fstat`, `_isatty`, `_lseek` and `_close`, which the LiteX
-target does not provide (the STM32 target has them in `syscall.c` and `sysmem.c`). The
-link fails, which stopped `testit` before it ran the Renode test. Built with
-`-DHAS_PRINTF=0`, the LiteX firmware links. Found with the xPack RISC-V toolchain 15.2.0.
+**What happened:** since `printf` was added to the example, newlib's stdio needed the
+system calls `_write`, `_read`, `_sbrk`, `_fstat`, `_isatty`, `_lseek` and `_close`, which the
+LiteX target did not provide (the STM32 target has them in `syscall.c` and `sysmem.c`). In
+addition, the linker script had no rule for the RISC-V small-data sections (`.sdata`,
+`.sbss`, `.srodata`): libc's ones fell into the final `/DISCARD/` of `libc.a`, hence errors
+such as "`errno` ... defined in discarded section". The link failed, which stopped
+`testit` before it ran the Renode test. Found with the xPack RISC-V toolchain 15.2.0.
 
-**Mitigation:** `testit` builds the LiteX firmware with `-DHAS_PRINTF=0`; its test case is
-skipped anyway.
+A second bug, which made the LiteX firmware fail at run time even without `printf`:
+`__global_pointer$` was defined at the end of `.text`, in flash, and `startup.s` never
+loaded `gp`. The linker turns accesses near `__global_pointer$` into `gp`-relative ones,
+which used `gp` = 0: the firmware built with `-DHAS_PRINTF=0` had 7 of them, including the
+loads of the handshake frames. This is probably why the LiteX test case was skipped.
 
-**Possible fix:** give the LiteX target system calls like the STM32 ones (`_write` calling
-`__io_putchar`, `_sbrk` on the RAM after `_ebss`, stubs for the others), then build it with
-`printf` again and enable its test case, whose expected output includes the `printf` line.
+**Fix:** `target/litex/syscall.c` provides the seven system calls: `_write` calls
+`__io_putchar`, `_sbrk` takes the RAM between `_end` and the stack reserve, `_fstat` and
+`_isatty` report a terminal so that newlib line-buffers `stdout`, the others are stubs. The
+linker script places the small-data sections in `.rodata`, `.data` and `.bss`, and defines
+`__global_pointer$` in RAM, 2 KiB into the small data; `startup.s` loads `gp` first, without
+relaxation. The firmware links with `printf`, every `gp`-relative access targets RAM, and
+`testit` builds it and runs its test case again. That test case has not been run in Renode
+yet.
 
