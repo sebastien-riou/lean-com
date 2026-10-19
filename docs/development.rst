@@ -53,8 +53,8 @@ The tests in which the two sides wait for each other are bounded by a timeout, 5
 thanks to it; ``LEANCOM_DEBUG_FRIENDLY=1`` in the environment of a VS Code debug configuration has the
 same effect. ``CC`` selects the C compiler (default ``cc``) and ``CFLAGS`` adds compiler flags.
 
-The known bugs listed in ``ISSUES.md`` have tests marked as expected failures. When a bug gets fixed,
-its test reports a failure, as a reminder to remove the mark.
+A known bug listed in ``ISSUES.md`` gets a test marked as a strict expected failure, which reports
+a failure once the bug is fixed, as a reminder to remove the mark.
 
 Linting
 -------

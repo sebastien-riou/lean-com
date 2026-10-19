@@ -1,57 +1,49 @@
 # Known issues
 
-Issues found while writing the documentation (October 2026). The status of each entry is given
-in its heading. Each entry gives the location, what happens, and a possible fix. Line numbers refer to the
-code at the time of writing.
+Issues found while writing the documentation (October 2026). The table and the heading of each
+entry give its status. Each entry gives the location, what happens, and the fix applied or
+possible. Line numbers refer to the code at the time of writing.
 
 Severity: **High** breaks normal use, **Medium** breaks a plausible use or silently
 corrupts data, **Low** is minor or affects tooling only.
 
-| #  | Issue                                                        | Severity |
-|----|--------------------------------------------------------------|----------|
-| 1  | Synchronization never completes with stale bytes (fixed)     | High     |
-| 2  | The C library assumes a little-endian device                 | Medium   |
-| 3  | `leancom.h` cannot be included from two C files              | Medium   |
-| 4  | Non-ASCII prints abort the host                              | Medium   |
-| 5  | Short reads from the transport are not detected              | Medium   |
-| 6  | A zero-size `leancom_rx_data()` can hang (fixed)             | Low      |
-| 7  | Command line tool: fixed baud rate, wrong program name       | Low      |
-| 8  | The example's platform files are not tracked                 | High     |
-| 9  | `buildit_env` and `testit_env` call a missing script         | Medium   |
-| 10 | The example's `Pipfile` is invalid                           | Medium   |
-| 11 | VS Code configurations refer to missing items                | Low      |
-| 12 | The Renode test waits for output the firmware never sends    | Low      |
-| 13 | Leftovers from the project template                          | Low      |
+| #  | Issue                                                     | Severity | Fixed  |
+|----|-----------------------------------------------------------|----------|--------|
+| 1  | Synchronization never completes with stale bytes          | High     | yes    |
+| 2  | The C library assumes a little-endian device              | Medium   | yes    |
+| 3  | `leancom.h` cannot be included from two C files           | Medium   | yes    |
+| 4  | Non-ASCII prints abort the host                           | Medium   | yes    |
+| 5  | Short reads from the transport are not detected           | Medium   | yes    |
+| 6  | A zero-size `leancom_rx_data()` can hang                  | Low      | yes    |
+| 7  | Command line tool: fixed baud rate, wrong program name    | Low      | yes    |
+| 8  | The example's platform files are not tracked              | High     | yes    |
+| 9  | `buildit_env` and `testit_env` call a missing script      | Medium   | yes    |
+| 10 | The example's `Pipfile` is invalid                        | Medium   | yes    |
+| 11 | VS Code configurations refer to missing items             | Low      | yes    |
+| 12 | The Renode test waits for output the firmware never sends | Low      | no     |
+| 13 | Leftovers from the project template                       | Low      | partly |
 
 ## Protocol and libraries
 
 ### 1. Synchronization never completes with stale bytes (High, fixed)
 
-**Where:** `leancom_synchronize()` in [include/leancom.h](include/leancom.h#L96),
-`Device.synchronize()` in [leancom/__init__.py](leancom/__init__.py#L50).
+**Where:** `leancom_synchronize()` in [include/leancom.h](include/leancom.h),
+`Device.synchronize()` in [leancom/__init__.py](leancom/__init__.py).
 
-**What happens:** during the handshake, each side sends exactly one byte per byte it
-receives. The only exception is the extra `M[7]` a side sends when it finds its peer
-one byte ahead. The handshake can therefore make up for one missing byte, but cannot
-drain surplus bytes:
+**What happened:** during the handshake, each side sent exactly one byte per byte it
+received, with one extra byte in a recovery branch. The handshake could make up for one
+missing byte, but could not drain surplus bytes:
 
-- One byte lost, in either direction, for example the device's first magic byte sent
-  before the host opened the port: recovered.
-- Two or more bytes lost: both sides block in a read, forever.
-- One or more stale bytes in a receive buffer when the handshake starts, for example
-  left over from a previous session, sent by a boot loader, or produced by a line
-  glitch at power-up: the handshake never completes, and both sides keep exchanging
-  bytes forever.
+- One byte lost, in either direction: recovered.
+- Two or more bytes lost: both sides blocked in a read, forever.
+- One or more stale bytes in a receive buffer when the handshake started (left over from
+  a previous session, sent by a boot loader, a line glitch at power-up): the handshake
+  never completed, and both sides kept exchanging bytes forever.
 
-**How it was checked:** the device code was compiled for the PC and connected to
+**How it was checked:** the device code compiled for the PC and connected to
 `leancom.Device` through pipes. With one stale byte in either direction, the two sides
-exchanged about 1.5 million bytes in 3 seconds without completing. With two lost
-bytes, both sides blocked. A simulation of both algorithms gives the same results.
-
-**Mitigation:** the documentation asks users to empty both receive paths before the
-handshake: `reset_input_buffer()` on the host right before `synchronize()`; on the
-device, discard received bytes before `leancom_synchronize()` and send nothing else
-before it.
+exchanged about 1.5 million bytes in 3 seconds without completing. With two lost bytes,
+both sides blocked. A simulation of both algorithms gave the same results.
 
 **Fix:** the handshake was replaced by the announce / match / ack / go sequence described
 in the protocol documentation: four 8-byte frames, a sliding window on each side that
@@ -63,162 +55,132 @@ in the device across its own reset; `synchronize(reset=...)` and `--reset-dtr` r
 device from the host. The former xfail tests are now regular tests in
 `test/test_native.py`, and `test/syncsim.py` models both state machines.
 
-### 2. The C library assumes a little-endian device (Medium, partly fixed)
+### 2. The C library assumes a little-endian device (Medium, fixed)
 
-**Status:** the synchronization frames are now byte arrays; only `leancom_putchar` remains.
+**Where:** `leancom_synchronize()` and `leancom_putchar()` in [include/leancom.h](include/leancom.h).
 
-**Where:** [include/leancom.h:102](include/leancom.h#L102) (`(uint8_t*)&magic`) and
-[include/leancom.h:72](include/leancom.h#L72) (`(const uint8_t*)&c`).
+**What happened:** both functions took bytes from the in-memory representation of a
+multi-byte integer. On a big-endian device, the magic bytes went out in reverse order,
+so the handshake never matched the Python host, and `leancom_putchar` sent the most
+significant byte of the `int`, `0x00`, instead of the character.
 
-**What happens:** both functions take bytes from the in-memory representation of a
-multi-byte integer. On a big-endian device:
+**Fix:** the handshake frames are byte arrays, and `leancom_putchar` copies the character
+into a `uint8_t` before sending it.
 
-- the magic bytes go out in reverse order, so the handshake never matches the Python
-  host, which sends them in little-endian order;
-- `leancom_putchar` sends the most significant byte of the `int`, `0x00`, instead of
-  the character.
+### 3. `leancom.h` cannot be included from two C files (Medium, fixed)
 
-**Possible fix:** define the magic as a byte array
-`{0xBC, 0x02, 0x9D, 0x8A, 0xA7, 0x3F, 0x44, 0xF2}`. In `leancom_putchar`, copy `c` into
-a `uint8_t` and send that.
+**Where:** `_leancom_rx8`, `_leancom_tx8` and `_leancom_raise_error` in
+[include/leancom.h](include/leancom.h).
 
-### 3. `leancom.h` cannot be included from two C files (Medium)
+**What happened:** the three functions were defined in the header without `static`, so a
+program with two C files including the header failed to link with "multiple definition"
+errors. The header also had no include guard.
 
-**Status:** the unused-function warning about `leancom_putchar` is gone (it is referenced
-in `leancom_synchronize()`); the multiple-definition errors remain.
+**Fix:** the three functions are `static`, like the rest of the header, and the header has
+an include guard. `test_header_in_two_translation_units` links two files that include it.
+The compile flag `-Wno-unused-function` that the test harness needed is gone too.
 
-**Where:** [include/leancom.h:18-29](include/leancom.h#L18-L29).
+### 4. Non-ASCII prints abort the host (Medium, fixed)
 
-**What happens:** `_leancom_rx8`, `_leancom_tx8` and `_leancom_raise_error` are defined
-in the header without `static`. A program with two C files that include the header
-fails to link with "multiple definition" errors (checked with gcc). The header also
-has no include guard.
+**Where:** the display of print packets in [leancom/__init__.py](leancom/__init__.py).
 
-Related: with `-Wall`, a file that does not call `leancom_putchar` gets an
-unused-function warning. `leancom_synchronize()` silences that warning for the other
-functions, but not for this one.
+**What happened:** the host decoded each print packet as UTF-8 on its own. A multi-byte
+character split between two packets raised `UnicodeDecodeError` out of `tx()` or `rx()`,
+which ended the session. `leancom_putchar`, used by `printf`, sends one byte per packet,
+so any non-ASCII character triggered it; `leancom_print` triggered it when a character
+spanned a 63-byte packet boundary.
 
-**Possible fix:** declare the three functions `static` and add an include guard.
+**Fix:** the print packets are decoded as one stream by an incremental UTF-8 decoder kept
+in the `Device`, so a split character is displayed once complete; an invalid byte is
+displayed as U+FFFD instead of raising.
 
-### 4. Non-ASCII prints abort the host (Medium)
+### 5. Short reads from the transport are not detected (Medium, fixed)
 
-**Where:** [leancom/__init__.py:141](leancom/__init__.py#L141) and
-[leancom/__init__.py:173](leancom/__init__.py#L173) (`decode()` on each packet).
+**Where:** the reads of [leancom/__init__.py](leancom/__init__.py).
 
-**What happens:** the host decodes each print packet as UTF-8 on its own. A
-multi-byte character split between two packets raises `UnicodeDecodeError` out of
-`tx()` or `rx()`, which ends the session. `leancom_putchar`, used by `printf`, sends
-one byte per packet, so any non-ASCII character triggers it. `leancom_print` triggers
-it when a character spans a 63-byte packet boundary.
+**What happened:** `Device` assumed that `read(n)` returned exactly `n` bytes. A transport
+could return fewer, for example `serial.Serial` opened with a `timeout`: `synchronize()`
+raised `IndexError` on an empty read, `rx_packet()` read an empty result as header
+`0x00`, and a short payload read left the following packets misread.
 
-**Possible fix:** decode with an incremental decoder stored in the `Device`
-(`codecs.getincrementaldecoder('utf-8')(errors='replace')`), or write the raw bytes to
-`sys.stdout.buffer`.
-
-### 5. Short reads from the transport are not detected (Medium)
-
-**Status:** `synchronize()` now raises `RuntimeError` on an empty read; the packet
-functions still do not check.
-
-**Where:** [leancom/__init__.py:67](leancom/__init__.py#L67),
-[leancom/__init__.py:106](leancom/__init__.py#L106),
-[leancom/__init__.py:114](leancom/__init__.py#L114).
-
-**What happens:** `Device` assumes that `read(n)` returns exactly `n` bytes. A
-transport can return fewer, for example `serial.Serial` opened with a `timeout`. Then:
-
-- `synchronize()` raises `IndexError` on an empty read;
-- `rx_packet()` reads an empty result as header `0x00`, an empty data packet: `rx()`
-  keeps polling, and `tx()` raises a misleading "Device is sending data" error;
-- a short payload read returns fewer bytes than the header announced, and the
-  following packets are misread.
-
-**Possible fix:** read through a helper that loops until `n` bytes have arrived, and
-raises a clear error at end of stream or on timeout.
+**Fix:** every read goes through `Device._read()`, which loops until the expected bytes
+arrived and raises `RuntimeError` when the transport returns nothing (end of stream, or
+timeout).
 
 ### 6. A zero-size `leancom_rx_data()` can hang (Low, fixed)
 
-**Where:** [include/leancom.h:43-44](include/leancom.h#L43-L44),
-[leancom/__init__.py:137](leancom/__init__.py#L137).
+**Where:** `leancom_rx_data()`, `leancom_tx_data()` and `leancom_print()` in
+[include/leancom.h](include/leancom.h).
 
-**What happens:** `leancom_rx_data(buf, 0)` sends a request for 0 bytes and waits for
-the answer. The host only answers it from within a `tx()` call that still has data to
-send: `tx(b'')` returns at once without reading anything, and `rx()` raises
-`RuntimeError`. Similarly, `leancom_tx_data(buf, 0)` sends an empty packet.
+**What happened:** `leancom_rx_data(buf, 0)` sent a request for 0 bytes and waited for
+the answer. The host only answered it from within a `tx()` call that still had data to
+send: `tx(b'')` returned at once without reading anything, and `rx()` raised
+`RuntimeError`. Similarly, `leancom_tx_data(buf, 0)` sent an empty packet.
 
 **Fix:** `leancom_rx_data()`, `leancom_tx_data()` and `leancom_print()` return immediately
 when the size is 0, so nothing goes on the wire; the host keeps accepting empty data
 packets. Tested by `test_zero_size_transfers_send_nothing` and the size 0 of `test_echo`.
 
-### 7. Command line tool: fixed baud rate, wrong program name (Low)
+### 7. Command line tool: fixed baud rate, wrong program name (Low, fixed)
 
-**Where:** [leancom/cli.py:13-14](leancom/cli.py#L13-L14),
-[leancom/cli.py:28](leancom/cli.py#L28).
+**Where:** [leancom/cli.py](leancom/cli.py).
 
-**What happens:**
+**What happened:** the serial port always opened at 9600 baud, the pyserial default, and no
+option changed it. `--help` showed the program as `cli.py` instead of `leancom`, because
+the parser was named after the source file.
 
-- The serial port always opens at 9600 baud, the pyserial default, and no option
-  changes it. This is fine for USB CDC-ACM ports and pseudo-terminals, but not for a
-  physical UART at another rate.
-- `--help` shows the program as `cli.py` instead of `leancom`, because the parser is
-  named after the source file.
-
-**Possible fix:** add a `--baudrate` option. Create the parser with
-`argparse.ArgumentParser(prog='leancom')`.
+**Fix:** `--baudrate` (default 9600, unchanged behaviour), and the parser is created with
+`prog='leancom'`.
 
 ## Example and tooling
 
-### 8. The example's platform files are not tracked (High)
+### 8. The example's platform files are not tracked (High, fixed)
 
-**Where:** [.gitignore:76](.gitignore#L76) (`target/`), `examples/basic/target/`.
+**Where:** `.gitignore` (`target/`), `examples/basic/target/`.
 
-**What happens:** the `target/` rule, from the Rust section of the template
-`.gitignore`, also ignores `examples/basic/target/`. That directory holds the linker
+**What happened:** the `target/` rule, from the Rust section of the template
+`.gitignore`, also ignored `examples/basic/target/`. That directory holds the linker
 scripts, startup code, CMake platform files and Renode scripts. `litex.cmake` and
-`nucleo-u5a5zj-q.cmake` include files from it, so the example cannot be built or run
+`nucleo-u5a5zj-q.cmake` include files from it, so the example could not be built or run
 from a fresh clone.
 
-**Fix:** remove the rule, or add `!examples/basic/target/` after it, then commit the
-directory.
+**Fix:** `!examples/basic/target/` added after the rule and the directory committed
+(commit f9057ad).
 
-### 9. `buildit_env` and `testit_env` call a missing script (Medium)
+### 9. `buildit_env` and `testit_env` call a missing script (Medium, fixed)
 
-**Where:** [examples/basic/buildit_env:5](examples/basic/buildit_env#L5),
-[examples/basic/testit_env:9](examples/basic/testit_env#L9).
+**Where:** [examples/basic/buildit_env](examples/basic/buildit_env),
+[examples/basic/testit_env](examples/basic/testit_env).
 
-**What happens:** both scripts run `pipenv run ./build` from the top-level directory.
-There, `build` is a build output directory, not a script; the script is `buildit`.
-Both scripts stop at that line. The VS Code tasks *Build U5A5* and *Build RV32IC* run
+**What happened:** both scripts ran `pipenv run ./build` from the top-level directory.
+There, `build` is a build output directory, not a script; the script is `buildit`. Both
+scripts stopped at that line. The VS Code tasks *Build U5A5* and *Build RV32IC* run
 `buildit_env`.
 
-**Fix:** call `./buildit`.
+**Fix:** they call `./buildit`. Not run here (they need the cross toolchain and Renode).
 
-### 10. The example's `Pipfile` is invalid (Medium)
+### 10. The example's `Pipfile` is invalid (Medium, fixed)
 
-**Where:** [examples/basic/Pipfile:15](examples/basic/Pipfile#L15).
+**Where:** [examples/basic/Pipfile](examples/basic/Pipfile).
 
-**What happens:** the line `leancom` has no value, so the file is not valid TOML and
-pipenv cannot read it. Every `pipenv` command run in `examples/basic` fails, including
-those in `buildit_env` and `testit_env`.
+**What happened:** the line `leancom` had no value, so the file was not valid TOML and
+pipenv could not read it. Every `pipenv` command run in `examples/basic` failed,
+including those in `buildit_env` and `testit_env`.
 
-**Fix:** give the package a source, for example `leancom = {path = "../..", editable = true}`.
+**Fix:** `leancom = {path = "../..", editable = true}`: the example uses the checkout.
+The scripts still force-install the freshly built wheel on top of it.
 
-### 11. VS Code configurations refer to missing items (Low)
+### 11. VS Code configurations refer to missing items (Low, fixed)
 
-**Where:** [.vscode/tasks.json:42-43](.vscode/tasks.json#L42-L43),
-[.vscode/tasks.json:93-94](.vscode/tasks.json#L93-L94), `.vscode/launch.json`.
+**Where:** `.vscode/tasks.json`, `.vscode/launch.json`.
 
-**What happens:**
+**What happened:** the tasks *Renode U5A5* and *Renode RV32IC* depended on a task
+labelled `Build application`, which did not exist (the build tasks are *Build U5A5* and
+*Build RV32IC*), and the launch configuration *Debug NUCLEO-U5A5ZJ-Q* pointed to
+`examples/whole_fw/`, which does not exist.
 
-- The tasks *Renode U5A5* and *Renode RV32IC* depend on a task labelled
-  `Build application`, which does not exist. The build tasks are labelled
-  *Build U5A5* and *Build RV32IC*. The *Dbg Renode* launch configurations, which the
-  README uses to run the example, start these tasks.
-- The launch configuration *Debug NUCLEO-U5A5ZJ-Q* points to `examples/whole_fw/`,
-  which does not exist.
-
-**Fix:** make each Renode task depend on the matching build task. Point the launch
-configuration to `examples/basic/`.
+**Fix:** each Renode task depends on its matching build task, and the launch
+configuration points to `examples/basic/`.
 
 ### 12. The Renode test waits for output the firmware never sends (Low)
 
@@ -232,13 +194,17 @@ test was not run.
 **Fix:** have the test play the host, for example by connecting `leancom` to the
 Renode pseudo-terminal, and check the host's output instead.
 
-### 13. Leftovers from the project template (Low)
+**Status:** open. Such a test has to be designed and checked against Renode.
 
-- `hatch.toml`: the `lint` environment checks a package named `usbman`.
-- `__main__.spec`: the PyInstaller executable is named `usbman`.
-- `pyproject.toml`: isort's `known-first-party` is `hdrbg`. The project URLs point to
-  `github.com/sebastien-riou/leancom`, while the repository is `lean-com`. The author
-  email is empty.
-- `buildit`: a comment refers to `.github/workflows/build.yml`, which does not exist.
-- `examples/basic/expected_output.txt` (the text of *Le Petit Prince*) and its
-  checksum file are not used anywhere.
+### 13. Leftovers from the project template (Low, partly fixed)
+
+Fixed: `hatch.toml` named a package `usbman`, `__main__.spec` named the PyInstaller
+executable `usbman`, isort's `known-first-party` in `pyproject.toml` was `hdrbg`, the
+project URLs pointed to `github.com/sebastien-riou/leancom` instead of `lean-com`, and a
+comment in `buildit` referred to a GitHub workflow that does not exist. The empty author
+email in `pyproject.toml` was removed: an author entry needs only a name.
+
+Left as they are:
+
+- `examples/basic/expected_output.txt` (the text of *Le Petit Prince*) and its checksum
+  file are not used anywhere; their purpose is unknown.

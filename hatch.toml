@@ -26,14 +26,14 @@ dependencies = [
   "ruff>=0.0.166",
 ]
 [envs.lint.scripts]
-typing = "mypy --install-types --non-interactive {args: usbman }"
+typing = "mypy --install-types --non-interactive {args:leancom}"
 style = [
-  "ruff check {args:usbman}",
-  "black --check --diff {args:usbman}",
+  "ruff check {args:leancom}",
+  "black --check --diff {args:leancom}",
 ]
 fmt = [
-  "black {args:usbman}",
-  "ruff check --fix {args:usbman}",
+  "black {args:leancom}",
+  "ruff check --fix {args:leancom}",
   "style",
 ]
 all = [

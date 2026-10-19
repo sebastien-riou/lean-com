@@ -16,7 +16,7 @@ README_OUTPUT = 'hello world!\nhello world from printf over lean-com!\nFF EE DD 
 def test_cli_basic_over_pty(pty_device, monkeypatch, capsys, clean_root_logger):
     """The session described in the README, with its output verbatim."""
     device = pty_device('basic_printf')
-    monkeypatch.setattr(sys, 'argv', ['leancom', device.path, 'tx00112233', 'rx4'])
+    monkeypatch.setattr(sys, 'argv', ['leancom', '--baudrate', '115200', device.path, 'tx00112233', 'rx4'])
     device.run(cli.main)
     assert capsys.readouterr().out == README_OUTPUT
     assert device.wait() == 0

@@ -70,8 +70,9 @@ The handshake uses four frames of 8 bytes:
      - :attr:`~leancom.Device.GO`
      - ``_leancom_go``
 
-The session id is 2 bytes drawn at random by the host for each handshake. The device
-copies the id it received into its ACK.
+The session id is 2 bytes drawn at random by the host for each handshake, none of them
+equal to the last byte of HELLO (in an ACK, such a byte would make the host send MAGIC
+once more, harmlessly). The device copies the id it received into its ACK.
 
 A side waiting for a frame keeps the last 8 bytes it received and compares them to the
 frame after each byte: MAGIC and ACK are recognized when their 6-byte pattern sits at
@@ -314,8 +315,121 @@ transfer in progress:
 
 ``tx(data)`` returns once all of ``data`` is sent; ``tx(b'')`` returns immediately.
 
-The host decodes each print packet as UTF-8 on its own, and writes it to stdout. A
-multi-byte character split between two packets fails to decode, and the transfer
-raises :class:`UnicodeDecodeError`. This always happens
-with ``leancom_putchar``, and can happen at 63-byte boundaries with ``leancom_print``.
-Keep device prints to ASCII.
+The host decodes the print packets as one UTF-8 stream and writes the text to stdout:
+a character split between two packets, which always happens with ``leancom_putchar``
+and can happen at 63-byte boundaries with ``leancom_print``, is displayed once its
+last byte arrived. An invalid byte is displayed as U+FFFD.
+
+Overhead
+--------
+
+After the handshake, and leaving prints aside, lean-com adds one header byte to each
+packet of up to 63 bytes. Data going to the device costs in addition one request byte
+per packet, and the host sends a packet only after the request for it arrived. The
+tables below compare a transfer of ``N`` bytes with sending the same bytes raw on the
+link, first by counting bytes, then on a typical setup. In both, ``k`` is the number
+of packets: ``N / 63`` rounded up.
+
+Bytes on the link
+~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 14 34 30
+
+   * - Transfer
+     - Raw
+     - lean-com
+     - Overhead
+   * - ``N`` bytes, device to host
+     - ``N``
+     - ``N + k``
+     - ``k`` bytes: 1 byte up to 63 bytes, 1.6 % for large transfers
+   * - ``N`` bytes, host to device
+     - ``N``
+     - ``N + k`` to the device, ``k`` to the host
+     - ``2k`` bytes, and ``k`` round trips
+   * - Round trips
+     - none
+     - ``k`` for host to device, none for device to host
+     -
+
+For example, 4 bytes cost 5 bytes to the host and 5 + 1 bytes to the device; 1024 bytes
+(``k`` = 17) cost 1041 bytes to the host, or 1041 + 17 bytes to the device.
+
+The round trips are what matters in practice. Only the first packet to the device is
+usually free of them: the device sends its request when it calls ``leancom_rx_data()``,
+which is normally before the host calls :meth:`~leancom.Device.tx`, so the request is
+already in the host's buffer. Each following packet is sent after its request travelled
+from the device to the host.
+
+Typical setup: Linux host, FTDI USB cable
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The model used for the figures below:
+
+- The UART runs at ``B`` baud, 10 bits per byte: a byte takes ``t`` = 10 / ``B``, that is
+  87 µs at 115200 baud and 8.7 µs at 1 Mbaud.
+- The FTDI chip forwards received bytes to the host in USB packets of 62 data bytes. A
+  partial packet is held until the chip's latency timer expires, 16 ms by default on
+  Linux (``/sys/bus/usb-serial/devices/ttyUSB0/latency_timer``, minimum 1 ms; also 1 ms
+  after ``setserial /dev/ttyUSB0 low_latency``). A lone byte, such as a request, waits
+  between 0 and ``L`` = 16 ms, 8 ms on average.
+- Bytes written by the host go out in the next USB frame, about 1 ms, then are clocked
+  on the UART at ``B``.
+- The Linux process and pyserial take well under a millisecond, which is ignored.
+
+Raw communication pays the same link costs once: ``N`` × ``t`` on the UART, 1 ms to start
+a write, and up to ``L`` for the tail of a transfer to the host to be forwarded.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24 28 24
+
+   * - Transfer
+     - Raw
+     - lean-com
+     - Difference
+   * - ``N`` bytes, device to host
+     - ``N`` × ``t`` + up to ``L``
+     - (``N`` + ``k``) × ``t`` + up to ``L``
+     - ``k`` × ``t``, about 1.6 %; same latency
+   * - up to 63 bytes, host to device, device already waiting
+     - 1 ms + ``N`` × ``t``
+     - 1 ms + (``N`` + 1) × ``t``
+     - one byte time
+   * - ``N`` bytes, host to device, several packets
+     - 1 ms + ``N`` × ``t``
+     - about ``k`` × (``L`` / 2 + 1 ms + 64 × ``t``)
+     - one request latency and one USB frame per packet
+
+Estimates from this model for 1024 bytes to the device (``k`` = 17), not measurements:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Setup
+     - Raw
+     - lean-com
+   * - 115200 baud, ``L`` = 16 ms
+     - 90 ms
+     - about 250 ms, 2.8 times slower
+   * - 115200 baud, ``L`` = 1 ms
+     - 90 ms
+     - about 120 ms, 1.3 times slower
+   * - 1 Mbaud, ``L`` = 16 ms
+     - 11 ms
+     - about 160 ms, 15 times slower
+   * - 1 Mbaud, ``L`` = 1 ms
+     - 11 ms
+     - about 35 ms, 3 times slower
+
+The same 1024 bytes to the host take 90 ms raw and 91 ms with lean-com at 115200 baud.
+So the cost of lean-com is concentrated on bulk transfers to the device, where the
+latency timer of the cable dominates: lowering it to 1 ms is the single most effective
+setting. Two details of the same origin: a full packet of 64 bytes spans two USB packets,
+so its last 2 bytes wait for the latency timer when nothing follows; and the host sends
+the header and the payload of a packet in two writes, which can land in two USB frames.
+
+In exchange, the device needs no receive buffer and no flow control: it is never sent a
+byte it has not asked for, which is what raw communication at these rates would require.

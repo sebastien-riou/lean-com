@@ -6,7 +6,7 @@ set -ex
 #for example ./testit_env minSizeRel
 
 pushd ../..
-pipenv run ./build
+pipenv run ./buildit
 popd
 pipenv run pip install --force-reinstall ../../dist/leancom*.whl
 pipenv run ./testit $*

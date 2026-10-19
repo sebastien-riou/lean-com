@@ -12,7 +12,7 @@
 // Exit codes: 0 scenario done, 2 usage error, 101 I/O error on stdin or stdout, 102 lean-com error.
 //
 // Manual build, from the top-level directory:
-//   cc -std=c11 -Wall -Wextra -Wno-unused-function -g -O0 -DLEANCOM_RX_FLUSH -I include -o build/device test/native/device.c
+//   cc -std=c11 -Wall -Wextra -g -O0 -DLEANCOM_RX_FLUSH -I include -o build/device test/native/device.c
 
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>

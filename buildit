@@ -14,4 +14,4 @@ git fetch --all
 git status
 $py -m build
 
-# we publish to pypi using github action, see .github/workflows/build.yml
+# no automated publication: the package is installed from git, see README.md

@@ -1,4 +1,5 @@
-
+#ifndef LEANCOM_H
+#define LEANCOM_H
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
@@ -21,15 +22,15 @@ void _leancom_rx_flush(void);
 #endif
 
 // internal low level functions
-uint8_t _leancom_rx8(){
+static uint8_t _leancom_rx8(void){
 	uint8_t out;
 	_leancom_rx(&out,1);
 	return out;
 }
-void _leancom_tx8(uint8_t c){
+static void _leancom_tx8(uint8_t c){
 	_leancom_tx(&c,1);
 }
-void _leancom_raise_error(uint32_t err_code){
+static void _leancom_raise_error(uint32_t err_code){
     _leancom_error_handler(err_code);
     while(1);//_leancom_error_handler shall not return
 }
@@ -78,7 +79,8 @@ static void leancom_print(const char*s){
 
 //function to override standard putchar if user wants to use printf
 static int leancom_putchar(int c){
-	_leancom_tx_packet(COM_PRINT,(const uint8_t*)&c,1);
+	const uint8_t byte = (uint8_t)c; // whatever the endianness
+	_leancom_tx_packet(COM_PRINT,&byte,1);
 	return c;
 }
 
@@ -152,3 +154,5 @@ static void leancom_synchronize(void){
 		}
 	}
 }
+
+#endif // LEANCOM_H

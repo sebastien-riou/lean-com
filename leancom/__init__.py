@@ -3,6 +3,7 @@
 The device side is the header-only C library ``include/leancom.h``.
 """
 
+import codecs
 import io
 import logging
 import os
@@ -30,9 +31,10 @@ class Device:
 
     Args:
         device: Underlying transport, typically a ``serial.Serial``. It must provide
-            ``read(size)``, ``write(data)`` and ``flush()``, and ``read(size)`` must
-            block until ``size`` bytes are available (for ``serial.Serial``, keep the
-            default ``timeout=None``).
+            ``read(size)``, ``write(data)`` and ``flush()``. ``read(size)`` may return
+            fewer bytes than asked; a read returning nothing (end of stream, or the
+            timeout of a ``serial.Serial`` opened with one) makes the transfer raise
+            :class:`RuntimeError`.
 
     Attributes:
         dev: The underlying transport.
@@ -68,6 +70,21 @@ class Device:
         self.dev = device
         self.rxbuf = bytearray()
         self.session_id = None
+        self._prints = codecs.getincrementaldecoder('utf-8')(errors='replace')
+
+    def _read(self, size):
+        """Read exactly size bytes from the transport, which may deliver them in several pieces."""
+        out = bytearray()
+        while len(out) < size:
+            chunk = self.dev.read(size - len(out))
+            if not chunk:
+                raise RuntimeError('Transport returned no data while %d byte(s) were expected' % (size - len(out)))
+            out += chunk
+        return bytes(out)
+
+    def _show(self, data):
+        """Display a print packet; a character split between two packets is shown once complete."""
+        print(self._prints.decode(data), end='', flush=True)  # noqa: T201
 
     def synchronize(self, reset=None, session_id=None):
         """Perform the rendez-vous with the device.
@@ -82,18 +99,24 @@ class Device:
         Args:
             reset: Called before the first byte is sent, to reset the device from the host (for example by
                 pulsing DTR on a board wired for it). ``None`` to do nothing.
-            session_id: The :attr:`SESSION_ID_SIZE` bytes identifying this handshake; drawn at random when
-                ``None``. The id used is available as :attr:`session_id` afterwards.
+            session_id: The :attr:`SESSION_ID_SIZE` bytes identifying this handshake, none equal to the last
+                byte of :attr:`HELLO`; drawn at random when ``None``. The id used is available as
+                :attr:`session_id` afterwards.
 
         Raises:
-            ValueError: ``session_id`` does not have :attr:`SESSION_ID_SIZE` bytes.
+            ValueError: ``session_id`` does not have :attr:`SESSION_ID_SIZE` bytes, or contains the last
+                byte of :attr:`HELLO`.
             RuntimeError: The transport returned no data (end of stream, or a transport with a timeout).
         """
         if session_id is None:
             session_id = os.urandom(self.SESSION_ID_SIZE)
+            while self.HELLO[-1] in session_id:  # in an ACK, that byte would make us send MAGIC once more
+                session_id = os.urandom(self.SESSION_ID_SIZE)
         session_id = bytes(session_id)
-        if len(session_id) != self.SESSION_ID_SIZE:
-            raise ValueError('session_id must have %d bytes, got %d' % (self.SESSION_ID_SIZE, len(session_id)))
+        if len(session_id) != self.SESSION_ID_SIZE or self.HELLO[-1] in session_id:
+            raise ValueError(
+                'session_id must have %d bytes, none equal to 0x%02x' % (self.SESSION_ID_SIZE, self.HELLO[-1])
+            )
         self.session_id = session_id
         magic = self.MAGIC + session_id
         if reset is not None:
@@ -105,9 +128,7 @@ class Device:
         self.dev.write(magic)
         window = bytearray()
         while True:
-            r = self.dev.read(1)
-            if not r:
-                raise RuntimeError('Transport returned no data during the synchronization')
+            r = self._read(1)
             logging.debug('sync: rx %s' % Utils.hexstr(r))
             window += r
             del window[:-8]
@@ -137,11 +158,11 @@ class Device:
             RuntimeError: The header has the host-to-device type (``0xC0``).
         """
         while True:
-            header = int.from_bytes(self.dev.read(1), byteorder='little')
+            header = self._read(1)[0]
             packet_size = header & 0x3F
             if (header & 0xC0) == 0xC0:
                 if header == self.HELLO[0]:
-                    rest = self.dev.read(len(self.HELLO) - 1)
+                    rest = self._read(len(self.HELLO) - 1)
                     if rest == self.HELLO[1:]:
                         raise DeviceRestartedError('The device restarted: synchronize again and restart the sequence')
                     raise RuntimeError(
@@ -152,7 +173,7 @@ class Device:
                 ptype = self.TX_REQ
                 data = packet_size
             else:
-                data = self.dev.read(packet_size)
+                data = self._read(packet_size)
                 if header & self.PRINT:
                     ptype = self.PRINT
                 else:
@@ -179,7 +200,7 @@ class Device:
             logging.debug('tx: wait for packet from device')
             packet_type, packet_data = self.rx_packet()
             if packet_type == self.PRINT:
-                print(packet_data.decode(), end='', flush=True)  # noqa T201
+                self._show(packet_data)
             if packet_type == self.RX_DATA:
                 raise RuntimeError('Device is sending data (%s)' % Utils.hexstr(packet_data))
             if packet_type == self.TX_REQ:
@@ -211,7 +232,7 @@ class Device:
             if packet_type == self.TX_REQ:
                 raise RuntimeError('Device is waiting for a packet')
             if packet_type == self.PRINT:
-                print(data.decode(), end='', flush=True)  # noqa T201
+                self._show(data)
             if packet_type == self.RX_DATA:
                 return data
 

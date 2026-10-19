@@ -9,7 +9,7 @@ source = "vcs"
 name = "leancom"
 dynamic = ["version"]
 authors = [
-  { name="Sebastien Riou", email="" },
+  { name="Sebastien Riou" },
 ]
 description = "Library for communication between embedded system and host computer"
 readme = "README.md"
@@ -35,8 +35,8 @@ test = [
   "pytest>=7",
 ]
 [project.urls]
-"Homepage" = "https://github.com/sebastien-riou/leancom"
-"Bug Tracker" = "https://github.com/sebastien-riou/leancom/issues"
+"Homepage" = "https://github.com/sebastien-riou/lean-com"
+"Bug Tracker" = "https://github.com/sebastien-riou/lean-com/issues"
 
 [project.scripts]
 leancom = "leancom.cli:main"
@@ -91,7 +91,7 @@ lint.unfixable = [
 exclude = ["docs","test","dist"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["hdrbg"]
+known-first-party = ["leancom"]
 
 [tool.ruff.lint.flake8-quotes]
 inline-quotes = "single"

@@ -12,7 +12,7 @@ pysatl = "==1.2.6"
 pyyaml = "==6.0.2"
 robotframework = "==6.1"
 robotframework-retryfailed = "==0.2.0"
-leancom
+leancom = {path = "../..", editable = true}
 
 [dev-packages]
 

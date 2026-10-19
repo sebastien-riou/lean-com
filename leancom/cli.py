@@ -2,7 +2,6 @@
 
 import argparse
 import logging
-import os
 import time
 import leancom
 from pysatl import Utils
@@ -19,10 +18,10 @@ def pulse_dtr(port):
 
 def main():
     """Entry point of the ``leancom`` command."""
-    scriptname = os.path.basename(__file__)
-    parser = argparse.ArgumentParser(scriptname)
+    parser = argparse.ArgumentParser(prog='leancom')
     levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
     parser.add_argument('--log-level', default='INFO', choices=levels)
+    parser.add_argument('--baudrate', type=int, default=9600, help='baud rate of the serial port (default: 9600)')
     parser.add_argument(
         '--reset-dtr',
         action='store_true',
@@ -39,7 +38,7 @@ def main():
 
     logging.debug(f'args = {args}')
 
-    with serial.Serial(args.device) as ser:
+    with serial.Serial(args.device, baudrate=args.baudrate) as ser:
         device = leancom.Device(device=ser)
         device.synchronize(reset=(lambda: pulse_dtr(ser)) if args.reset_dtr else None)
         for command in args.commands:

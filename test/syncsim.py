@@ -62,6 +62,14 @@ def host(sid):
         yield ('tx', b)
 
 
+def draw_id(rnd):
+    """A session id as the host draws it: random, without the last byte of HELLO."""
+    while True:
+        sid = rnd.randbytes(2)
+        if HELLO[-1] not in sid:
+            return sid
+
+
 def run(
     rnd,
     *,
@@ -82,7 +90,7 @@ def run(
     dropping what is in its input (*_keeps). The outcome is 'ok', 'deadlock' or 'livelock'.
     """
     queues = {'h2d': deque(stale_h2d), 'd2h': deque(stale_d2h)}
-    ids = [rnd.randbytes(2)]
+    ids = [draw_id(rnd)]
     gen = {'dev': device(), 'host': host(ids[0])}
     start = {'dev': dev_start, 'host': host_start}
     out = {'dev': 'd2h', 'host': 'h2d'}
@@ -97,7 +105,7 @@ def run(
             if not dev_reset_keeps:
                 queues['h2d'].clear()
         if host_restart_at == t and 'host' not in done:
-            ids.append(rnd.randbytes(2))
+            ids.append(draw_id(rnd))
             gen['host'] = host(ids[-1])
             op.pop('host', None)
             if not host_restart_keeps:

@@ -63,7 +63,7 @@ def compile_c(sources, output, *, extra=(), check=True):
     cc_path = shutil.which(cc)
     if cc_path is None:
         pytest.fail(f'C compiler "{cc}" not found: install one, set CC, or run with -m "not native"', pytrace=False)
-    cmd = [cc_path, '-std=c11', '-Wall', '-Wextra', '-Wno-unused-function', '-g', '-O0', f'-I{INCLUDE_DIR}']
+    cmd = [cc_path, '-std=c11', '-Wall', '-Wextra', '-g', '-O0', f'-I{INCLUDE_DIR}']
     cmd += shlex.split(os.environ.get('CFLAGS', ''))
     cmd += list(extra)
     cmd += ['-o', str(output), *(str(source) for source in sources)]

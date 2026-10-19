@@ -1,5 +1,7 @@
 """leancom.Device against a scripted transport: no device, no C compiler. Bytes come from docs/protocol.rst."""
 
+import sys
+
 import pytest
 import syncsim
 from harness import ACK, GO, HELLO, MAGIC, FakeLink
@@ -87,17 +89,24 @@ def test_sync_session_id():
     device = Device(link)
     with pytest.raises(ValueError):
         device.synchronize(session_id=b'\x01')
+    with pytest.raises(ValueError):
+        device.synchronize(session_id=HELLO[-1:] + b'\x01')  # would trigger the last-byte-of-HELLO rule
     assert link.log == []
     device.synchronize(session_id=SID)
     assert device.session_id == SID
 
 
 def test_sync_draws_a_random_session_id():
-    link = AnsweringLink()
-    device = Device(link)
-    device.synchronize()
-    assert len(device.session_id) == Device.SESSION_ID_SIZE
-    assert link.written == MAGIC + device.session_id + GO
+    ids = set()
+    for _ in range(300):
+        link = AnsweringLink()
+        device = Device(link)
+        device.synchronize()
+        assert len(device.session_id) == Device.SESSION_ID_SIZE
+        assert HELLO[-1] not in device.session_id
+        assert link.written == MAGIC + device.session_id + GO
+        ids.add(device.session_id)
+    assert len(ids) > 250
 
 
 def test_sync_reset_hook_runs_before_any_byte():
@@ -187,6 +196,71 @@ def test_pulse_dtr(monkeypatch):
     cli.pulse_dtr(port)
     assert port.levels == [True, False]
     assert sleeps == [0.1, 0.1]
+
+
+# transports that deliver bytes in pieces, or stop delivering (ISSUES.md #5)
+
+
+class ChunkedLink(FakeLink):
+    """Returns at most one byte per read, like a serial port with a short timeout."""
+
+    def read(self, size=1):
+        return super().read(min(size, 1))
+
+
+class TruncatedLink(FakeLink):
+    """Returns nothing once the script is exhausted, like a serial port whose timeout expired."""
+
+    def read(self, size=1):
+        return super().read(min(size, len(self.incoming)))
+
+
+def test_short_reads_are_completed():
+    link = ChunkedLink(b'\x04' + ANSWER + b'\x44')
+    device = Device(link)
+    assert device.rx(4) == ANSWER
+    assert device.rx_packet() == (Device.TX_REQ, 4)
+    assert not link.incoming
+
+
+def test_sync_with_short_reads():
+    link = ChunkedLink(HELLO + ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == (MAGIC + SID) * 2 + GO
+
+
+@pytest.mark.parametrize('incoming', [b'', b'\x04\xff\xee'], ids=['no-header', 'cut-payload'])
+def test_empty_read_in_a_packet_raises(incoming):
+    with pytest.raises(RuntimeError, match='no data'):
+        Device(TruncatedLink(incoming)).rx(4)
+
+
+# prints (ISSUES.md #4)
+
+
+def test_prints_decode_a_character_split_between_packets(capsys):
+    link = FakeLink(b'\x81\xc3' + b'\x82\xa9\n' + b'\x01\x42')
+    assert Device(link).rx(1) == b'\x42'
+    assert capsys.readouterr().out == '\u00e9\n'
+
+
+def test_prints_replace_invalid_bytes(capsys):
+    link = FakeLink(b'\x83\xffa\n' + b'\x01\x42')
+    assert Device(link).rx(1) == b'\x42'
+    assert capsys.readouterr().out == '\ufffda\n'
+
+
+# command line tool (ISSUES.md #7)
+
+
+def test_cli_help_names_the_program(monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'argv', ['whatever', '--help'])
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith('usage: leancom ')
+    assert '--baudrate' in out and '--reset-dtr' in out
 
 
 # rx_packet

@@ -9,8 +9,9 @@ greeting, receives 4 bytes, and sends them back inverted.
 Device side
 -----------
 
-Include ``include/leancom.h`` in one C file of the firmware and define the three
-functions the library needs from the platform:
+Include ``include/leancom.h`` in the firmware (its functions are ``static``, so it can be
+included wherever it is used) and define, once, the three functions the library needs
+from the platform:
 
 .. code-block:: c
 
@@ -95,15 +96,6 @@ calls ``__io_putchar``, this is:
 
 Each character then travels in its own packet, so ``leancom_print`` is more efficient
 for long strings.
-
-.. note::
-
-   Limitations of the current C library:
-
-   - It defines non-``static`` functions in the header, so include it from a single
-     translation unit.
-   - ``leancom_putchar`` assumes a little-endian device: it takes the character from
-     the in-memory representation of an ``int``.
 
 Host side
 ---------
@@ -205,10 +197,10 @@ Transport requirements
 ~~~~~~~~~~~~~~~~~~~~~~
 
 :class:`leancom.Device` accepts any object with ``read(size)``, ``write(data)`` and
-``flush()`` methods. ``read(size)`` must block until ``size`` bytes are available: a
-read returning fewer bytes is not detected and corrupts the stream. With
-``serial.Serial``, keep the default ``timeout=None``. As a consequence, a call blocks
-forever if the device stops responding.
+``flush()`` methods. ``read(size)`` may return fewer bytes than asked; a read returning
+nothing ends the transfer with :class:`RuntimeError`. With ``serial.Serial`` and the
+default ``timeout=None``, a call blocks forever if the device stops responding; with a
+timeout, it raises instead.
 
 As :class:`leancom.Device` has ``read``, ``write``, ``readline`` and ``flush`` methods,
 it can itself serve as the transport of a higher-level protocol.

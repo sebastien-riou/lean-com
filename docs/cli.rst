@@ -10,7 +10,7 @@ Synopsis
 
 .. code-block:: text
 
-   leancom [-h] [--log-level LEVEL] device [command ...]
+   leancom [-h] [--log-level LEVEL] [--baudrate BAUD] [--reset-dtr] device [command ...]
 
 The same tool runs with ``python -m leancom`` or ``python -m leancom.cli``.
 
@@ -41,6 +41,11 @@ Arguments
    One of ``DEBUG``, ``INFO`` (default), ``WARNING``, ``ERROR`` and ``CRITICAL``.
    ``DEBUG`` logs every byte of the synchronization and every step of the transfers.
 
+.. option:: --baudrate BAUD
+
+   Baud rate of the serial port, 9600 by default. It does not matter for USB CDC-ACM
+   ports and pseudo-terminals.
+
 .. option:: --reset-dtr
 
    Pulse the DTR line before synchronizing, to reset a board whose reset input is wired
@@ -48,9 +53,7 @@ Arguments
 
 Prints from the device are displayed while transfers run, see :doc:`usage`.
 
-The serial port uses the pyserial defaults: 9600 baud, 8 data bits, no parity, one
-stop bit, no flow control. The baud rate does not matter for USB CDC-ACM ports and
-pseudo-terminals; for a physical UART at another rate, use the Python API.
+The serial port uses 8 data bits, no parity, one stop bit and no flow control.
 
 Example
 -------

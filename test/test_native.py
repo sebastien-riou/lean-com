@@ -211,6 +211,31 @@ def test_device_restart_is_detected_and_resynchronized(native_device, capsys):
     assert device.wait() == 0
 
 
+def test_print_utf8_split_across_packets(native_device, capsys):
+    """A character cut by the 63-byte packet boundary is displayed once complete (ISSUES.md #4)."""
+    device = native_device('print_utf8')
+    device.host.synchronize()
+    assert device.host.rx(1) == b'\x42'
+    assert device.wait() == 0
+    assert capsys.readouterr().out == 'a' * 62 + '\u00e9\n'
+
+
+def test_header_in_two_translation_units(tmp_path):
+    """Every function of the header is static: two C files can include it and link together (ISSUES.md #3)."""
+    a = tmp_path / 'a.c'
+    b = tmp_path / 'b.c'
+    a.write_text('#include "leancom.h"\nvoid a(void){ leancom_synchronize(); }\n')
+    b.write_text(
+        '#include "leancom.h"\n'
+        'void a(void);\n'
+        'void _leancom_tx(const void *const buf, unsigned int size){ (void)buf; (void)size; }\n'
+        'void _leancom_rx(void *const buf, unsigned int size){ (void)buf; (void)size; }\n'
+        'void _leancom_error_handler(uint32_t err_code){ (void)err_code; }\n'
+        'int main(void){ a(); leancom_synchronize(); return 0; }\n'
+    )
+    compile_c([a, b], tmp_path / 'two')
+
+
 def test_flush_hook_discards_stale_input(native_device):
     """A complete stale MAGIC and GO in the device input are discarded by _leancom_rx_flush()."""
     device = native_device('basic', flush=1)

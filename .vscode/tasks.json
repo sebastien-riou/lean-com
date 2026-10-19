@@ -40,7 +40,7 @@
                 "target/stm32/nucleo-u5a5.resc"
             ],
             "dependsOn": [
-                "Build application"
+                "Build U5A5"
             ],
             "isBackground": true,
             "problemMatcher": {
@@ -91,7 +91,7 @@
                 "target/litex/litex.resc"
             ],
             "dependsOn": [
-                "Build application"
+                "Build RV32IC"
             ],
             "isBackground": true,
             "problemMatcher": {
