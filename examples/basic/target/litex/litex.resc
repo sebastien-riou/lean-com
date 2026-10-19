@@ -1,0 +1,22 @@
+:name: LiteX
+:description: This script demonstrate basic use case of leancom
+
+$name?="LiteX"
+$bin ?= $CWD/build/build-litex.cmake/leancom-basic.elf
+
+using sysbus
+mach create $name
+emulation CreateUartPtyTerminal "term" "/tmp/leancom-uart" forceCreate=True
+machine LoadPlatformDescription $CWD/target/litex/litex.repl
+
+machine StartGdbServer 3333
+
+macro reset
+"""
+    sysbus LoadELF $bin
+"""
+
+#showAnalyzer sysbus.uart
+#uart CreateFileBackend $CWD/uart.log true
+connector Connect sysbus.uart term
+runMacro $reset

@@ -1,0 +1,12 @@
+flash: Memory.MappedMemory @ sysbus 0x0
+    size: 0x00080000
+
+ram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x00080000
+
+//cpu: CPU.VexRiscv @ sysbus
+cpu: CPU.RiscV32 @ sysbus
+    cpuType: "rv32imc_zicsr_zifencei"
+
+uart: UART.LiteX_UART @ sysbus 0x60001800
+    -> cpu@2

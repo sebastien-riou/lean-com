@@ -1,0 +1,19 @@
+:name: Nucleo-u5a5
+:description: This script demonstrate basic use case of leancom
+
+$name?="Nucleo-u5a5"
+$bin ?= $CWD/build/build-nucleo-u5a5zj-q.cmake/leancom-basic.elf
+mach create $name
+emulation CreateUartPtyTerminal "term" "/tmp/leancom-uart" forceCreate=True
+machine LoadPlatformDescription $CWD/target/stm32/stm32u5a5.repl
+
+machine StartGdbServer 3333
+
+macro reset
+"""
+    sysbus LoadELF $bin
+"""
+
+#showAnalyzer sysbus.usart1
+connector Connect sysbus.usart1 term
+runMacro $reset
