@@ -241,8 +241,9 @@ corresponding type bits.
 Rules:
 
 - ``length`` is 0 to 63. The device splits a longer transfer into packets of 63 bytes
-  followed by a packet with the remainder. When the size is a non-zero multiple of 63,
-  the last packet is a full one: no empty packet follows.
+  followed by a packet with the remainder. When the size is a multiple of 63, the last
+  packet is a full one: no empty packet follows. A transfer of 0 bytes, or an empty
+  print, sends nothing at all. The host nevertheless accepts empty data packets.
 - The device sends data, text and requests whenever its application calls
   ``leancom_tx_data``, ``leancom_print`` (or ``leancom_putchar``) and
   ``leancom_rx_data``.

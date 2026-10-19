@@ -39,14 +39,3 @@ def test_print_utf8_split_across_packets(native_device, capsys):
     assert device.host.rx(1) == b'\x42'
     assert device.wait() == 0
     assert capsys.readouterr().out == 'a' * 62 + 'é\n'
-
-
-@pytest.mark.xfail(
-    strict=True, raises=RuntimeError, reason='ISSUES.md #6: a zero-size leancom_rx_data() is never answered'
-)
-def test_rx_zero_size_then_data(native_device):
-    device = native_device('rx_zero')
-    device.host.synchronize()
-    device.host.tx(b'')
-    assert device.host.rx(1) == b'\x42'
-    assert device.wait() == 0

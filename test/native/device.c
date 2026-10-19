@@ -115,9 +115,11 @@ static void scenario_sends_first(void){
   leancom_rx_data(buf, 1);
 }
 
-// ISSUES.md #6: a zero-size reception, then one byte of data
-static void scenario_rx_zero(void){
+// Zero-size transfers and an empty print, which put nothing on the wire, then one byte of data
+static void scenario_zero_sizes(void){
   leancom_rx_data(buf, 0);
+  leancom_tx_data(buf, 0);
+  leancom_print("");
   const uint8_t data = 0x42;
   leancom_tx_data(&data, 1);
 }
@@ -144,7 +146,7 @@ static void scenario_restart(void){
 
 // Same order as the switch in main()
 static const char *const scenarios[] = {
-  "basic", "basic_printf", "echo", "lines", "sends_first", "rx_zero", "print_utf8", "restart",
+  "basic", "basic_printf", "echo", "lines", "sends_first", "zero_sizes", "print_utf8", "restart",
 };
 static const unsigned int n_scenarios = sizeof(scenarios) / sizeof(scenarios[0]);
 
@@ -202,7 +204,7 @@ int main(int argc, char *argv[]){
     case 2: scenario_echo(size); break;
     case 3: scenario_lines(); break;
     case 4: scenario_sends_first(); break;
-    case 5: scenario_rx_zero(); break;
+    case 5: scenario_zero_sizes(); break;
     case 6: scenario_print_utf8(); break;
     case 7: scenario_restart(); break;
   }

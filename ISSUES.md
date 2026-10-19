@@ -14,7 +14,7 @@ corrupts data, **Low** is minor or affects tooling only.
 | 3  | `leancom.h` cannot be included from two C files              | Medium   |
 | 4  | Non-ASCII prints abort the host                              | Medium   |
 | 5  | Short reads from the transport are not detected              | Medium   |
-| 6  | A zero-size `leancom_rx_data()` can hang                     | Low      |
+| 6  | A zero-size `leancom_rx_data()` can hang (fixed)             | Low      |
 | 7  | Command line tool: fixed baud rate, wrong program name       | Low      |
 | 8  | The example's platform files are not tracked                 | High     |
 | 9  | `buildit_env` and `testit_env` call a missing script         | Medium   |
@@ -136,7 +136,7 @@ transport can return fewer, for example `serial.Serial` opened with a `timeout`.
 **Possible fix:** read through a helper that loops until `n` bytes have arrived, and
 raises a clear error at end of stream or on timeout.
 
-### 6. A zero-size `leancom_rx_data()` can hang (Low)
+### 6. A zero-size `leancom_rx_data()` can hang (Low, fixed)
 
 **Where:** [include/leancom.h:43-44](include/leancom.h#L43-L44),
 [leancom/__init__.py:137](leancom/__init__.py#L137).
@@ -146,8 +146,9 @@ the answer. The host only answers it from within a `tx()` call that still has da
 send: `tx(b'')` returns at once without reading anything, and `rx()` raises
 `RuntimeError`. Similarly, `leancom_tx_data(buf, 0)` sends an empty packet.
 
-**Possible fix:** return immediately when the size is 0 in `leancom_rx_data()` and
-`leancom_tx_data()`.
+**Fix:** `leancom_rx_data()`, `leancom_tx_data()` and `leancom_print()` return immediately
+when the size is 0, so nothing goes on the wire; the host keeps accepting empty data
+packets. Tested by `test_zero_size_transfers_send_nothing` and the size 0 of `test_echo`.
 
 ### 7. Command line tool: fixed baud rate, wrong program name (Low)
 

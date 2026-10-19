@@ -65,6 +65,9 @@ static void _leancom_rx_packet(uint8_t*dst, unsigned int size){
 // User level functions
 static void leancom_print(const char*s){
 	unsigned int size = strlen(s);
+	if(size == 0){
+		return; // nothing to send, and no empty packet
+	}
 	while(size > COM_PACKET_MAX_DATA_SIZE){
 		_leancom_tx_packet(COM_PRINT,(const uint8_t*)s,COM_PACKET_MAX_DATA_SIZE);
 		s += COM_PACKET_MAX_DATA_SIZE;
@@ -81,6 +84,9 @@ static int leancom_putchar(int c){
 
 static void leancom_tx_data(const void*data, uint32_t size){
 	uint8_t*data8=(uint8_t*)data;
+	if(size == 0){
+		return; // nothing to send, and no empty packet
+	}
 	while(size > COM_PACKET_MAX_DATA_SIZE){
 		_leancom_tx_packet(COM_TO_HOST,data8,COM_PACKET_MAX_DATA_SIZE);
 		data8 += COM_PACKET_MAX_DATA_SIZE;
@@ -91,6 +97,9 @@ static void leancom_tx_data(const void*data, uint32_t size){
 
 static void leancom_rx_data(void*data, uint32_t size){
 	uint8_t*data8=(uint8_t*)data;
+	if(size == 0){
+		return; // nothing to receive, and no request for 0 bytes
+	}
 	while(size > COM_PACKET_MAX_DATA_SIZE){
 		_leancom_rx_packet(data8,COM_PACKET_MAX_DATA_SIZE);
 		data8 += COM_PACKET_MAX_DATA_SIZE;

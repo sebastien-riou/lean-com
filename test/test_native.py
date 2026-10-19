@@ -59,7 +59,7 @@ def test_basic_example(native_device, capsys):
     assert device.transport.from_device == expected
 
 
-@pytest.mark.parametrize('size', [1, 62, 63, 64, 126, 127, 200, 4096])
+@pytest.mark.parametrize('size', [0, 1, 62, 63, 64, 126, 127, 200, 4096])
 def test_echo(native_device, size):
     """Transfers are split in packets of 63 bytes plus the remainder; no empty packet after an exact multiple."""
     device = native_device('echo', size=size)
@@ -74,6 +74,18 @@ def test_echo(native_device, size):
     to_device, from_device = after_sync(device)
     assert headers(from_device, from_device=True) == [0x7F] * full + [0x40 | r for r in tail] + [0x3F] * full + tail
     assert headers(to_device, from_device=False) == [0xFF] * full + [0xC0 | r for r in tail]
+
+
+def test_zero_size_transfers_send_nothing(native_device):
+    """leancom_rx_data(), leancom_tx_data() and leancom_print() with a size of 0 put nothing on the wire."""
+    device = native_device('zero_sizes')
+    device.host.synchronize()
+    device.host.tx(b'')
+    assert device.host.rx(1) == b'\x42'
+    assert device.wait() == 0
+    to_device, from_device = after_sync(device)
+    assert to_device == b''
+    assert from_device == b'\x01\x42'
 
 
 def test_rx_in_pieces(native_device):
