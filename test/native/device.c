@@ -3,18 +3,20 @@
 // It uses the real header-only library (include/leancom.h) and talks to the host on stdin and stdout,
 // which the tests connect to pipes or to a pseudo-terminal. Diagnostics go to stderr.
 //
-// Usage: device SCENARIO [garbage=N] [discard=N] [size=N]
+// Usage: device SCENARIO [garbage=N] [flush=1] [size=N]
 //   garbage=N   send N bytes 0x55 before synchronizing (stale bytes on the host side)
-//   discard=N   receive and drop N bytes before synchronizing (lost host-to-device bytes)
+//   flush=1     receive one byte, then discard the bytes already received, then synchronize
+//               (needs LEANCOM_RX_FLUSH; the trigger byte lets a test put stale bytes in place first)
 //   size=N      transfer size of the 'echo' scenario (default 200, max 4096)
 //
 // Exit codes: 0 scenario done, 2 usage error, 101 I/O error on stdin or stdout, 102 lean-com error.
 //
 // Manual build, from the top-level directory:
-//   cc -std=c11 -Wall -Wextra -Wno-unused-function -g -O0 -I include -o build/device test/native/device.c
+//   cc -std=c11 -Wall -Wextra -Wno-unused-function -g -O0 -DLEANCOM_RX_FLUSH -I include -o build/device test/native/device.c
 
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,6 +63,17 @@ void _leancom_error_handler(uint32_t err_code){
   fprintf(stderr, "device: leancom error at leancom.h:%u\n", (unsigned int)err_code);
   exit(EXIT_LEANCOM);
 }
+
+#ifdef LEANCOM_RX_FLUSH
+// Discard the bytes already received, what a UART FIFO reset does on a device
+void _leancom_rx_flush(void){
+  struct pollfd pfd = {.fd = STDIN_FILENO, .events = POLLIN};
+  uint8_t sink[64];
+  while(poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN)){
+    if(read(STDIN_FILENO, sink, sizeof(sink)) <= 0) break;
+  }
+}
+#endif
 
 // Scenarios
 
@@ -122,14 +135,21 @@ static void scenario_print_utf8(void){
   leancom_tx_data(&data, 1);
 }
 
+// A device reset in the middle of the session: a new HELLO reaches the host, then the basic application
+static void scenario_restart(void){
+  leancom_print("hello world!\n");
+  leancom_synchronize();
+  scenario_basic(false);
+}
+
 // Same order as the switch in main()
 static const char *const scenarios[] = {
-  "basic", "basic_printf", "echo", "lines", "sends_first", "rx_zero", "print_utf8",
+  "basic", "basic_printf", "echo", "lines", "sends_first", "rx_zero", "print_utf8", "restart",
 };
 static const unsigned int n_scenarios = sizeof(scenarios) / sizeof(scenarios[0]);
 
 static void usage(void){
-  fprintf(stderr, "usage: device SCENARIO [garbage=N] [discard=N] [size=N]\nscenarios:");
+  fprintf(stderr, "usage: device SCENARIO [garbage=N] [flush=1] [size=N]\nscenarios:");
   for(unsigned int i = 0; i < n_scenarios; i++){
     fprintf(stderr, " %s", scenarios[i]);
   }
@@ -150,10 +170,10 @@ int main(int argc, char *argv[]){
     usage();
     return EXIT_USAGE;
   }
-  unsigned int garbage = 0, discard = 0, size = 200;
+  unsigned int garbage = 0, flush = 0, size = 200;
   for(int i = 2; i < argc; i++){
     if(1 == sscanf(argv[i], "garbage=%u", &garbage)) continue;
-    if(1 == sscanf(argv[i], "discard=%u", &discard)) continue;
+    if(1 == sscanf(argv[i], "flush=%u", &flush)) continue;
     if(1 == sscanf(argv[i], "size=%u", &size)) continue;
     fprintf(stderr, "device: invalid option '%s'\n", argv[i]);
     usage();
@@ -163,9 +183,17 @@ int main(int argc, char *argv[]){
     fprintf(stderr, "device: size=%u exceeds the %u-byte buffer\n", size, (unsigned int)sizeof(buf));
     return EXIT_USAGE;
   }
+  if(flush){
+#ifdef LEANCOM_RX_FLUSH
+    (void)_leancom_rx8(); // the trigger byte: the stale bytes written with it are in place
+    _leancom_rx_flush();
+#else
+    fprintf(stderr, "device: flush=1 needs a build with -DLEANCOM_RX_FLUSH\n");
+    return EXIT_USAGE;
+#endif
+  }
 
   for(unsigned int i = 0; i < garbage; i++) _leancom_tx8(0x55);
-  for(unsigned int i = 0; i < discard; i++) (void)_leancom_rx8();
   leancom_synchronize();
 
   switch(scenario){
@@ -176,6 +204,7 @@ int main(int argc, char *argv[]){
     case 4: scenario_sends_first(); break;
     case 5: scenario_rx_zero(); break;
     case 6: scenario_print_utf8(); break;
+    case 7: scenario_restart(); break;
   }
   return 0;
 }

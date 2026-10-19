@@ -1,7 +1,7 @@
 # Known issues
 
-Issues found while writing the documentation (October 2026). None is fixed yet. Each
-entry gives the location, what happens, and a possible fix. Line numbers refer to the
+Issues found while writing the documentation (October 2026). The status of each entry is given
+in its heading. Each entry gives the location, what happens, and a possible fix. Line numbers refer to the
 code at the time of writing.
 
 Severity: **High** breaks normal use, **Medium** breaks a plausible use or silently
@@ -9,7 +9,7 @@ corrupts data, **Low** is minor or affects tooling only.
 
 | #  | Issue                                                        | Severity |
 |----|--------------------------------------------------------------|----------|
-| 1  | Synchronization never completes with stale bytes             | High     |
+| 1  | Synchronization never completes with stale bytes (fixed)     | High     |
 | 2  | The C library assumes a little-endian device                 | Medium   |
 | 3  | `leancom.h` cannot be included from two C files              | Medium   |
 | 4  | Non-ASCII prints abort the host                              | Medium   |
@@ -25,7 +25,7 @@ corrupts data, **Low** is minor or affects tooling only.
 
 ## Protocol and libraries
 
-### 1. Synchronization never completes with stale bytes (High)
+### 1. Synchronization never completes with stale bytes (High, fixed)
 
 **Where:** `leancom_synchronize()` in [include/leancom.h](include/leancom.h#L96),
 `Device.synchronize()` in [leancom/__init__.py](leancom/__init__.py#L50).
@@ -53,11 +53,19 @@ handshake: `reset_input_buffer()` on the host right before `synchronize()`; on t
 device, discard received bytes before `leancom_synchronize()` and send nothing else
 before it.
 
-**Possible fix:** a fix needs a step in which one side can consume more bytes than it
-sends, so that surplus bytes get drained. This changes the wire protocol on both
-sides.
+**Fix:** the handshake was replaced by the announce / match / ack / go sequence described
+in the protocol documentation: four 8-byte frames, a sliding window on each side that
+discards everything but the expected frame, a session id that lets a restarted host
+join, and a final phase that drains surplus bytes. Stale bytes in either direction,
+lost bytes and host restarts are tolerated; a device reset during a session is reported
+as `DeviceRestartedError`; the optional `_leancom_rx_flush()` hook covers data retained
+in the device across its own reset; `synchronize(reset=...)` and `--reset-dtr` reset the
+device from the host. The former xfail tests are now regular tests in
+`test/test_native.py`, and `test/syncsim.py` models both state machines.
 
-### 2. The C library assumes a little-endian device (Medium)
+### 2. The C library assumes a little-endian device (Medium, partly fixed)
+
+**Status:** the synchronization frames are now byte arrays; only `leancom_putchar` remains.
 
 **Where:** [include/leancom.h:102](include/leancom.h#L102) (`(uint8_t*)&magic`) and
 [include/leancom.h:72](include/leancom.h#L72) (`(const uint8_t*)&c`).
@@ -75,6 +83,9 @@ multi-byte integer. On a big-endian device:
 a `uint8_t` and send that.
 
 ### 3. `leancom.h` cannot be included from two C files (Medium)
+
+**Status:** the unused-function warning about `leancom_putchar` is gone (it is referenced
+in `leancom_synchronize()`); the multiple-definition errors remain.
 
 **Where:** [include/leancom.h:18-29](include/leancom.h#L18-L29).
 
@@ -105,6 +116,9 @@ it when a character spans a 63-byte packet boundary.
 `sys.stdout.buffer`.
 
 ### 5. Short reads from the transport are not detected (Medium)
+
+**Status:** `synchronize()` now raises `RuntimeError` on an empty read; the packet
+functions still do not check.
 
 **Where:** [leancom/__init__.py:67](leancom/__init__.py#L67),
 [leancom/__init__.py:106](leancom/__init__.py#L106),

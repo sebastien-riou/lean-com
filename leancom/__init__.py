@@ -5,6 +5,7 @@ The device side is the header-only C library ``include/leancom.h``.
 
 import io
 import logging
+import os
 
 try:
     from pysatl import Utils
@@ -14,6 +15,10 @@ except ModuleNotFoundError:
         @staticmethod
         def hexstr(o):
             return str(o)
+
+
+class DeviceRestartedError(RuntimeError):
+    """The device restarted during the session: synchronize again and restart the sequence."""
 
 
 class Device:
@@ -32,6 +37,7 @@ class Device:
     Attributes:
         dev: The underlying transport.
         rxbuf (bytearray): Data received from the device but not yet returned by :meth:`rx`.
+        session_id (bytes): The id of the last handshake, see :meth:`synchronize`.
     """
 
     #: Header type of a transmit request, device to host (``COM_TX_REQ`` in C).
@@ -43,51 +49,78 @@ class Device:
     #: Header type of a data packet, host to device (``COM_TO_DEVICE`` in C).
     COM_TO_DEVICE = 0xC0
 
+    #: Sent by the device when it starts the handshake (``_leancom_hello`` in C). Its last byte makes the host
+    #: send :attr:`MAGIC` again; its first byte is an invalid packet header, so that a host in a running
+    #: session detects a restarted device (:class:`DeviceRestartedError`).
+    HELLO = bytes.fromhex('DA 42 65 83 2B A0 E6 AA')
+    #: Sent by the host to open the handshake, followed by the session id (``_leancom_magic`` in C).
+    MAGIC = bytes.fromhex('BC 02 9D 8A A7 3F')
+    #: Sent by the device once it has received :attr:`MAGIC`, followed by the session id it received
+    #: (``_leancom_ack`` in C).
+    ACK = bytes.fromhex('2B D7 94 6C E1 38')
+    #: Sent by the host once it has received :attr:`ACK` with its own session id; ends the handshake
+    #: (``_leancom_go`` in C).
+    GO = bytes.fromhex('93 4A E8 27 5C B1 F6 0E')
+    #: Size of the session id that follows :attr:`MAGIC` and :attr:`ACK`.
+    SESSION_ID_SIZE = 2
+
     def __init__(self, device):
         self.dev = device
         self.rxbuf = bytearray()
+        self.session_id = None
 
-    def synchronize(self):
+    def synchronize(self, reset=None, session_id=None):
         """Perform the rendez-vous with the device.
 
-        Call it once, before any transfer, while the device runs ``leancom_synchronize()``.
-        Blocks until both sides are synchronized. The handshake recovers from the loss of
-        one byte but not from stale bytes already waiting in a receive buffer, see the
-        synchronization section of the protocol documentation.
+        Call it once, before any transfer, while the device runs ``leancom_synchronize()``; either side may
+        start first. Blocks until both sides are synchronized. The handshake skips stale bytes waiting in
+        either direction, tolerates bytes lost while a side was not listening yet, and lets a host restarted
+        at any moment join; see the synchronization section of the protocol documentation. It cannot
+        resynchronize a device that is in its application: reset it first (``reset``), or have
+        ``_leancom_error_handler()`` reset it.
+
+        Args:
+            reset: Called before the first byte is sent, to reset the device from the host (for example by
+                pulsing DTR on a board wired for it). ``None`` to do nothing.
+            session_id: The :attr:`SESSION_ID_SIZE` bytes identifying this handshake; drawn at random when
+                ``None``. The id used is available as :attr:`session_id` afterwards.
+
+        Raises:
+            ValueError: ``session_id`` does not have :attr:`SESSION_ID_SIZE` bytes.
+            RuntimeError: The transport returned no data (end of stream, or a transport with a timeout).
         """
-        magic = 0xF2443FA78A9D02BC
-        magic_bytes = magic.to_bytes(8, byteorder='little')
-        cnt = 0
-        while cnt < len(magic_bytes):
-            t = magic_bytes[cnt : cnt + 1]
-            logging.debug('sync: cnt = %d, tx %s' % (cnt, Utils.hexstr(t)))
-            self.dev.write(t)
-            r = self.dev.read(1)
-            logging.debug('sync: cnt = %d, rx %s' % (cnt, Utils.hexstr(r)))
-            hit = r[0] == magic_bytes[cnt]
-            if cnt < len(magic_bytes) - 1:
-                if not hit:
-                    hit = r[0] == magic_bytes[cnt + 1]
-                    if hit:
-                        if cnt + 1 == len(magic_bytes) - 1:
-                            t = magic_bytes[-1:]
-                            logging.debug('sync: cnt = %d, tx %s' % (cnt, Utils.hexstr(t)))
-                            self.dev.write(t)
-                            break
-            if hit:
-                cnt += 1
-            else:
-                cnt = 0
+        if session_id is None:
+            session_id = os.urandom(self.SESSION_ID_SIZE)
+        session_id = bytes(session_id)
+        if len(session_id) != self.SESSION_ID_SIZE:
+            raise ValueError('session_id must have %d bytes, got %d' % (self.SESSION_ID_SIZE, len(session_id)))
+        self.session_id = session_id
+        magic = self.MAGIC + session_id
+        if reset is not None:
+            logging.debug('sync: resetting the device')
+            reset()
+        if hasattr(self.dev, 'reset_input_buffer'):
+            self.dev.reset_input_buffer()  # anything received so far is stale, or a HELLO we do not need
+        logging.debug('sync: tx MAGIC %s' % Utils.hexstr(magic))
+        self.dev.write(magic)
+        window = bytearray()
         while True:
             r = self.dev.read(1)
-            logging.debug('sync: rx %s (final loop)' % (Utils.hexstr(r)))
-            if int(r[0]) == 1:
-                logging.debug('sync: tx 1')
-                self.dev.write(bytearray([1]))
-                break
-            else:
-                logging.debug('sync: tx 0')
-                self.dev.write(bytearray([0]))
+            if not r:
+                raise RuntimeError('Transport returned no data during the synchronization')
+            logging.debug('sync: rx %s' % Utils.hexstr(r))
+            window += r
+            del window[:-8]
+            if len(window) == 8 and window[:6] == self.ACK:
+                if window[6:] == session_id:
+                    break
+                logging.debug('sync: ACK with a foreign id %s, tx MAGIC again' % Utils.hexstr(window[6:]))
+                self.dev.write(magic)
+            elif r == self.HELLO[-1:]:
+                logging.debug('sync: end of HELLO, tx MAGIC again')
+                self.dev.write(magic)
+        logging.debug('sync: rx ACK, tx GO %s' % Utils.hexstr(self.GO))
+        self.dev.write(self.GO)
 
     def rx_packet(self):
         """Receive one packet from the device.
@@ -100,12 +133,20 @@ class Device:
             of bytes the device requests (int), otherwise it is the payload (bytes).
 
         Raises:
+            DeviceRestartedError: The device sent its HELLO: it restarted.
             RuntimeError: The header has the host-to-device type (``0xC0``).
         """
         while True:
             header = int.from_bytes(self.dev.read(1), byteorder='little')
             packet_size = header & 0x3F
             if (header & 0xC0) == 0xC0:
+                if header == self.HELLO[0]:
+                    rest = self.dev.read(len(self.HELLO) - 1)
+                    if rest == self.HELLO[1:]:
+                        raise DeviceRestartedError('The device restarted: synchronize again and restart the sequence')
+                    raise RuntimeError(
+                        'Received an invalid header: 0x%02x (followed by %s)' % (header, Utils.hexstr(rest))
+                    )
                 raise RuntimeError('Received an invalid header: 0x%02x' % header)
             if header & self.TX_REQ:
                 ptype = self.TX_REQ

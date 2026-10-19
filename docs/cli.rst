@@ -41,6 +41,11 @@ Arguments
    One of ``DEBUG``, ``INFO`` (default), ``WARNING``, ``ERROR`` and ``CRITICAL``.
    ``DEBUG`` logs every byte of the synchronization and every step of the transfers.
 
+.. option:: --reset-dtr
+
+   Pulse the DTR line before synchronizing, to reset a board whose reset input is wired
+   to it. The handshake then starts from a freshly reset device.
+
 Prints from the device are displayed while transfers run, see :doc:`usage`.
 
 The serial port uses the pyserial defaults: 9600 baud, 8 data bits, no parity, one

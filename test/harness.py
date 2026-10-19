@@ -20,15 +20,30 @@ HEADER = INCLUDE_DIR / 'leancom.h'
 EXAMPLE_HEADER = REPO_ROOT / 'examples' / 'basic' / 'include' / 'leancom.h'
 DEVICE_SOURCE = Path(__file__).resolve().parent / 'native' / 'device.c'
 
-#: The synchronization magic, in the order each side sends it (0xF2443FA78A9D02BC, little-endian)
-MAGIC = bytes.fromhex('BC 02 9D 8A A7 3F 44 F2')
-#: Everything each side sends during a nominal synchronization
-SYNC = MAGIC + b'\x01'
+#: The synchronization frames, as in docs/protocol.rst (checked against leancom.Device in test_host.py)
+HELLO = bytes.fromhex('DA 42 65 83 2B A0 E6 AA')  # device -> host, announces the device
+MAGIC = bytes.fromhex('BC 02 9D 8A A7 3F')  # host -> device, followed by the 2-byte session id
+ACK = bytes.fromhex('2B D7 94 6C E1 38')  # device -> host, followed by the session id it received
+GO = bytes.fromhex('93 4A E8 27 5C B1 F6 0E')  # host -> device, ends the handshake
 
 #: Exit codes of the native device, see native/device.c
 EXIT_USAGE = 2
 EXIT_IO = 101
 EXIT_LEANCOM_ERROR = 102
+
+
+def sync_to_device(sid):
+    """What the host sends to synchronize a native device on pipes.
+
+    The device starts first and its HELLO waits in the pipe, so the host always receives it and sends MAGIC a
+    second time; the device skips that copy while waiting for GO.
+    """
+    return MAGIC + sid + MAGIC + sid + GO
+
+
+def sync_from_device(sid):
+    """What a native device on pipes sends to synchronize."""
+    return HELLO + ACK + sid
 
 
 class DeviceTimeoutError(TimeoutError):
@@ -39,7 +54,7 @@ class DeviceExitedError(RuntimeError):
     """The native device ended its side of the link while the host still needed it."""
 
 
-def compile_c(sources, output, *, check=True):
+def compile_c(sources, output, *, extra=(), check=True):
     """Compile and link C sources with $CC (default cc), with -I include. Returns the CompletedProcess.
 
     A missing compiler, or a failure when check is true, fails the test with the command and its output.
@@ -50,6 +65,7 @@ def compile_c(sources, output, *, check=True):
         pytest.fail(f'C compiler "{cc}" not found: install one, set CC, or run with -m "not native"', pytrace=False)
     cmd = [cc_path, '-std=c11', '-Wall', '-Wextra', '-Wno-unused-function', '-g', '-O0', f'-I{INCLUDE_DIR}']
     cmd += shlex.split(os.environ.get('CFLAGS', ''))
+    cmd += list(extra)
     cmd += ['-o', str(output), *(str(source) for source in sources)]
     result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
     if check and result.returncode != 0:
@@ -61,9 +77,9 @@ def compile_c(sources, output, *, check=True):
 
 
 def build_device(directory):
-    """Compile the native device into directory, return the path of the binary."""
+    """Compile the native device, with the flush hook, into directory; return the path of the binary."""
     output = Path(directory) / 'device'
-    compile_c([DEVICE_SOURCE], output)
+    compile_c([DEVICE_SOURCE], output, extra=('-DLEANCOM_RX_FLUSH',))
     return output
 
 
@@ -72,10 +88,12 @@ class PipeDev:
 
     read() blocks until the requested bytes arrived, as serial.Serial does without timeout, but gives up at a
     deadline set when the object is created (timeout=None disables it). Every byte is logged in to_device and
-    from_device.
+    from_device. The first `drop` bytes written are discarded instead of sent, as a link does with bytes sent
+    while the device is in reset; they are logged in `dropped`. There is deliberately no reset_input_buffer():
+    a pipe keeps every byte, which the tests rely on.
     """
 
-    def __init__(self, proc, timeout, status):
+    def __init__(self, proc, timeout, status, drop=0):
         self._rd = proc.stdout.fileno()
         self._wr = proc.stdin.fileno()
         self._status = status
@@ -83,6 +101,8 @@ class PipeDev:
         self.deadline = None if timeout is None else time.monotonic() + timeout
         self.to_device = bytearray()
         self.from_device = bytearray()
+        self.to_drop = drop
+        self.dropped = bytearray()
 
     def read(self, size=1):
         out = bytearray()
@@ -110,7 +130,13 @@ class PipeDev:
             )
 
     def write(self, data):
-        view = memoryview(bytes(data))
+        data = bytes(data)
+        if self.to_drop:
+            n = min(self.to_drop, len(data))
+            self.dropped += data[:n]
+            self.to_drop -= n
+            data = data[n:]
+        view = memoryview(data)
         try:
             while view:
                 n = os.write(self._wr, view)
@@ -169,16 +195,17 @@ class _DeviceProcess:
 class NativeDevice(_DeviceProcess):
     """The native device on pipes, with `transport` (a PipeDev) and `host` (the leancom.Device driving it)."""
 
-    def __init__(self, binary, scenario, options, timeout, stderr_path):
+    def __init__(self, binary, scenario, options, timeout, stderr_path, drop=0):
         super().__init__(binary, scenario, options, timeout, stderr_path)
         self._start(stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
-        self.transport = PipeDev(self.proc, timeout, self.status)
+        self.transport = PipeDev(self.proc, timeout, self.status, drop=drop)
         self.host = leancom.Device(self.transport)
 
     def status(self):
         t = self.transport
+        dropped = f', {len(t.dropped)} B dropped before reaching it' if t.dropped else ''
         return (
-            f'{super().status()}; {len(t.to_device)} B sent to it (last {t.to_device[-16:].hex(" ")}), '
+            f'{super().status()}; {len(t.to_device)} B sent to it (last {t.to_device[-16:].hex(" ")}){dropped}, '
             f'{len(t.from_device)} B received from it (last {t.from_device[-16:].hex(" ")})'
         )
 

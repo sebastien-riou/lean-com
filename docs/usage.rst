@@ -34,6 +34,20 @@ platform. ``err_code`` is the line of ``leancom.h`` that detected the error. The
 error that can happen in practice is the host answering a transmit request with a
 packet of the wrong type or size, see :doc:`protocol`.
 
+Optionally, define ``LEANCOM_RX_FLUSH`` before including the header and provide a fourth
+function:
+
+.. code-block:: c
+
+   // Discard the bytes already received, without blocking (for example reset the UART FIFO).
+   void _leancom_rx_flush(void){
+     uart_flush_rx();
+   }
+
+``leancom_synchronize()`` calls it once, before anything else. It makes the handshake
+immune to data that survived a reset of the device in its receive path, see
+:ref:`sync-limitations`.
+
 The application then uses the following functions:
 
 .. list-table::
@@ -88,9 +102,8 @@ for long strings.
 
    - It defines non-``static`` functions in the header, so include it from a single
      translation unit.
-   - It assumes a little-endian device: the synchronization bytes and the character
-     sent by ``leancom_putchar`` are taken from the in-memory representation of
-     multi-byte integers.
+   - ``leancom_putchar`` assumes a little-endian device: it takes the character from
+     the in-memory representation of an ``int``.
 
 Host side
 ---------
@@ -104,7 +117,6 @@ the device's sequence of operations:
    import leancom
 
    with serial.Serial('/dev/ttyACM0', baudrate=115200) as ser:
-       ser.reset_input_buffer()  # discard stale bytes, see the protocol page
        device = leancom.Device(ser)
        device.synchronize()
        device.tx(bytes.fromhex('00112233'))
@@ -155,6 +167,39 @@ and raises :class:`RuntimeError`:
 - ``Device is sending data (...)``: the host called ``tx`` while the device sends data.
 - ``Device request more data (...)``: the device asked for more bytes than what
   remains of the buffer passed to ``tx``.
+
+Recovering from restarts
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The handshake copes with either side starting first, with stale bytes and with a host
+restarted at any moment, so the host script can simply be run again. A device reset in
+the middle of a session is reported by :class:`leancom.DeviceRestartedError` on the next
+transfer: call :meth:`~leancom.Device.synchronize` again and restart the sequence of
+transfers from the beginning.
+
+The reverse case, a host restarted while the device is in its application, needs the
+device to be reset. Two ways:
+
+- Make ``_leancom_error_handler()`` reset the device. The host's first bytes reach the
+  application as a packet with an invalid header, the device resets and announces
+  itself, and the host, still synchronizing, completes the handshake.
+- Reset the device from the host, with the ``reset`` argument of
+  :meth:`~leancom.Device.synchronize`, called before the first byte is sent. On a board
+  whose reset input is wired to the DTR line of its USB serial adapter:
+
+  .. code-block:: python
+
+     def pulse_dtr():
+         ser.dtr = True
+         time.sleep(0.1)
+         ser.dtr = False
+         time.sleep(0.1)
+
+     device.synchronize(reset=pulse_dtr)
+
+  The command line tool does this with ``--reset-dtr``. Any other means works the same
+  way, for example a debug probe (``reset=lambda: subprocess.run(['st-flash', 'reset'])``)
+  or the monitor of an emulator.
 
 Transport requirements
 ~~~~~~~~~~~~~~~~~~~~~~

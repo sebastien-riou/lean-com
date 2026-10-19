@@ -27,3 +27,14 @@ def test_cli_invalid_command(pty_device, monkeypatch, clean_root_logger):
     monkeypatch.setattr(sys, 'argv', ['leancom', device.path, 'zz'])
     with pytest.raises(RuntimeError, match='Invalid command "zz"'):
         device.run(cli.main)
+
+
+def test_cli_reset_option_calls_pulse(pty_device, monkeypatch, capsys, clean_root_logger):
+    pulsed = []
+    monkeypatch.setattr(cli, 'pulse_dtr', pulsed.append)
+    device = pty_device('basic_printf')
+    monkeypatch.setattr(sys, 'argv', ['leancom', '--reset-dtr', device.path, 'tx00112233', 'rx4'])
+    device.run(cli.main)
+    assert [port.port for port in pulsed] == [device.path]
+    assert capsys.readouterr().out == README_OUTPUT
+    assert device.wait() == 0

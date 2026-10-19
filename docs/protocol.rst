@@ -20,9 +20,10 @@ Roles
    bytes it did not ask for.
 
 Phases
-   A session starts with a synchronization handshake, then carries packets. A
-   running session cannot be resynchronized: to start a new one, restart the
-   device and synchronize again.
+   A session starts with a synchronization handshake, then carries packets. The
+   handshake tolerates stale bytes, bytes lost while a side was not listening, and a
+   host restarted at any moment. A running session cannot be resynchronized: reset
+   the device, or let its error handler do it, and synchronize again.
 
 .. _synchronization:
 
@@ -31,85 +32,165 @@ Synchronization
 
 Both sides start with a handshake: ``leancom_synchronize()`` on the device,
 :meth:`leancom.Device.synchronize` on the host. It works whichever side starts first,
-and leaves the two byte streams aligned so that the first packet follows it.
+skips stale bytes waiting in either direction, tolerates bytes lost while a side was
+not listening yet, and lets a host restarted at any moment join. It leaves the two
+byte streams aligned, so that the first packet follows it.
 
-The handshake uses an 8-byte magic sequence ``M``, the 64-bit constant
-``0xF2443FA78A9D02BC`` in little-endian byte order:
+Frames
+~~~~~~
+
+The handshake uses four frames of 8 bytes:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Frame
+     - Direction
+     - Bytes
+     - Python
+     - C
+   * - HELLO
+     - device to host
+     - ``DA 42 65 83 2B A0 E6 AA``
+     - :attr:`~leancom.Device.HELLO`
+     - ``_leancom_hello``
+   * - MAGIC
+     - host to device
+     - ``BC 02 9D 8A A7 3F`` + session id
+     - :attr:`~leancom.Device.MAGIC`
+     - ``_leancom_magic``
+   * - ACK
+     - device to host
+     - ``2B D7 94 6C E1 38`` + session id
+     - :attr:`~leancom.Device.ACK`
+     - ``_leancom_ack``
+   * - GO
+     - host to device
+     - ``93 4A E8 27 5C B1 F6 0E``
+     - :attr:`~leancom.Device.GO`
+     - ``_leancom_go``
+
+The session id is 2 bytes drawn at random by the host for each handshake. The device
+copies the id it received into its ACK.
+
+A side waiting for a frame keeps the last 8 bytes it received and compares them to the
+frame after each byte: MAGIC and ACK are recognized when their 6-byte pattern sits at
+the front of the window, with the id behind it; GO when the whole window equals it.
+Everything else slides out and is discarded, which is what skips stale bytes and
+partial frames. The constants are chosen so that no frame is recognized at a wrong
+position inside the sequences each side sends, whatever the id: distinct bytes in each
+pattern, no border, no match across frames. Each contains a byte above ``0x7F``, so
+stale ASCII text never matches.
+
+Sequence
+~~~~~~~~
+
+Device: if ``LEANCOM_RX_FLUSH`` is defined, discard the bytes already received; send
+HELLO; wait for MAGIC and store the id; send ACK with that id; wait for GO. While
+waiting for GO, a MAGIC with a different id is a restarted host: the device stores the
+new id and sends ACK again. A MAGIC with the same id is a surplus copy, and slides out.
+
+Host: draw an id; call the ``reset`` hook if given; empty the input buffer if the
+transport can; send MAGIC; read byte by byte: an ACK with its own id ends the wait; an
+ACK with another id (stale, or the device acknowledged a stale MAGIC) makes it send
+MAGIC again; the last byte of HELLO (a whole HELLO, or only its tail when the port was
+opened or flushed while HELLO was in flight) makes it send MAGIC again. Then send GO.
+
+Whoever starts second sends to a peer that is already listening: a device started
+second sends HELLO, which makes the host send MAGIC again; a host started second sends
+MAGIC to a device that waits for it. Surplus copies of MAGIC carry the same id and all
+precede GO, so the wait for GO drains them.
+
+The device starts first, on a real port:
 
 .. code-block:: text
 
-   M[0..7] = BC 02 9D 8A A7 3F 44 F2
+   Host                                       Device
+     |                                        |
+     |<--- HELLO -----------------------------|   lost: the host has not opened its port yet
+     |---- MAGIC id ------------------------->|   the host opens the port and starts
+     |<--- ACK id ----------------------------|
+     |---- GO ------------------------------->|   both sides are done
+     |                                        |
 
-Phase 1: magic exchange
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Both sides run the same algorithm, with an index ``i`` starting at 0:
-
-1. Send ``M[i]``, then receive a byte ``r``.
-2. If ``r == M[i]``, increment ``i``.
-3. Otherwise, if ``i < 7`` and ``r == M[i+1]``, the peer is one byte ahead, typically
-   because its first byte was lost. Increment ``i``. If ``i`` is now 7, send ``M[7]``
-   and leave phase 1.
-4. Otherwise, set ``i`` to 0.
-5. Leave phase 1 when ``i`` reaches 8, otherwise go back to step 1.
-
-Phase 2: confirmation
-~~~~~~~~~~~~~~~~~~~~~
-
-The two sides now play different roles:
-
-- The device sends ``01`` and receives a byte, and repeats until it receives ``01``.
-- The host receives a byte. If it is ``01``, the host answers ``01`` and stops;
-  otherwise it answers ``00`` and repeats.
-
-In the nominal case, each direction carries the same 9 bytes:
+The host starts first:
 
 .. code-block:: text
 
-   host to device:  BC 02 9D 8A A7 3F 44 F2 01
-   device to host:  BC 02 9D 8A A7 3F 44 F2 01
+   Host                                       Device
+     |                                        |
+     |---- MAGIC id ------------------------->|   lost: the device is in reset
+     |<--- HELLO -----------------------------|   the device starts; its last byte triggers a new MAGIC
+     |---- MAGIC id ------------------------->|
+     |<--- ACK id ----------------------------|
+     |---- GO ------------------------------->|
+     |                                        |
 
-Recovery of a lost byte
-~~~~~~~~~~~~~~~~~~~~~~~
-
-A typical case: the device boots first and sends ``BC`` before the host opens the
-port, so the host never receives it (``--`` below). From then on, the host receives
-each magic byte while it expects the previous one, which step 3 accepts. When it
-receives ``F2`` at ``i = 6``, the host sends the ``F2`` the device waits for and moves
-to phase 2:
+A link that buffers (pseudo-terminal, pipe, USB), with stale bytes:
 
 .. code-block:: text
 
-   device sends:     BC 02 9D 8A A7 3F 44 F2 01
-   host receives:    -- 02 9D 8A A7 3F 44 F2 01
-   host sends:       BC 02 9D 8A A7 3F 44 F2 01
-   device receives:  BC 02 9D 8A A7 3F 44 F2 01
+   Host                                       Device
+     |                                        |
+     |<--- 55 55 -----------------------------|   stale, slide out on the host
+     |<--- HELLO -----------------------------|   buffered until the host reads
+     |---- MAGIC id ------------------------->|   sent before the host reads anything
+     |<--- ACK id ----------------------------|
+     |---- MAGIC id ------------------------->|   end of HELLO: a second copy, slides out on the device
+     |---- GO ------------------------------->|
+     |                                        |
 
-The host sends that ``F2`` without having received a byte for it: this extra byte
-replaces the lost one.
+The host restarts while the device waits for GO:
+
+.. code-block:: text
+
+   Host                                       Device
+     |                                        |
+     |---- MAGIC id1 ------------------------>|
+     |<--- ACK id1 ---------------------------|   the host dies before sending GO
+     |---- MAGIC id2 ------------------------>|   a new host, a new id
+     |<--- ACK id2 ---------------------------|   the device acknowledges the new id
+     |---- GO ------------------------------->|
+     |                                        |
+
+What it tolerates
+~~~~~~~~~~~~~~~~~
+
+- Stale bytes in either direction, whatever their content and number.
+- HELLO or MAGIC lost or truncated: the other side sends again.
+- Bytes overrun while the device transmits HELLO or ACK: only a surplus copy of MAGIC
+  can be hit.
+- A device reset at any point before it sends ACK.
+- A host restart at any moment, even while the device waits for GO.
+
+Against a peer sending random bytes, the host completes the handshake by chance with
+probability 2\ :sup:`-64` per byte position (ACK followed by its own id), and the
+device with about 2\ :sup:`-112` (MAGIC, then GO). Two hosts in a row drawing the same
+id happens with probability 2\ :sup:`-16`; it only matters in the restart case above,
+where the device then takes the new host for a surplus copy.
 
 .. _sync-limitations:
 
-Limitations
-~~~~~~~~~~~
+What still needs attention
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-During the handshake, each side sends one byte per byte it receives, except for the
-extra ``M[7]`` of step 3. The handshake can therefore make up for one missing byte,
-but it cannot drain extra ones:
-
-- **One lost byte**, in either direction: recovered, as shown above.
-- **Two or more lost bytes**: both sides end up waiting for a byte that never comes.
-- **Stale bytes** already in a receive buffer when the handshake starts, left over
-  from a previous session or sent by a boot loader on the same port: the handshake
-  never completes, and both sides keep exchanging bytes.
-
-Make sure that both receive paths are empty when the handshake starts:
-
-- On the host, call ``reset_input_buffer()`` on the serial port right before
-  :meth:`~leancom.Device.synchronize`. At worst it discards the first magic byte of
-  the device, which the handshake recovers.
-- On the device, discard any byte received before ``leancom_synchronize()``, and send
-  nothing else on the port before it.
+- **The device resets after it sent ACK.** The host completes the handshake, then its
+  next transfer receives HELLO and raises :class:`leancom.DeviceRestartedError`. Call
+  :meth:`~leancom.Device.synchronize` again (the device waits for MAGIC) and restart
+  the application sequence.
+- **The device kept a complete MAGIC in its receive path across its own reset** (a
+  receive buffer that is not reset with the core). Without the flush hook, the device
+  acknowledges it; the live host, whose id differs, then gets its own ACK, unless a
+  stale GO followed, in which case the device is in its application (next point).
+  Define ``LEANCOM_RX_FLUSH`` to remove the case.
+- **A running session cannot be resynchronized.** A device in its application reads
+  the host's MAGIC as a packet with a bad header and calls ``_leancom_error_handler()``.
+  If that handler resets the device, the session recovers by itself: the device sends
+  HELLO and the host, still waiting for ACK, sends MAGIC again. Otherwise reset the
+  device, for example from the host with the ``reset`` argument of
+  :meth:`~leancom.Device.synchronize` (``--reset-dtr`` in the command line tool).
+- ``_leancom_rx`` must keep receiving after an overrun error, as bytes may arrive while
+  the device transmits.
 
 Packets
 -------

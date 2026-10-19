@@ -54,12 +54,17 @@ def device_binary(tmp_path_factory):
 
 @pytest.fixture
 def native_device(device_binary, device_timeout, tmp_path):
-    """Factory: native_device(scenario, **options) starts a device on pipes. All of them are ended at teardown."""
+    """Factory: native_device(scenario, *, drop=0, timeout=None, **options) starts a device on pipes.
+
+    drop=N discards the first N bytes the host writes (lost while the device was in reset); timeout shortens
+    the deadline of this device (ignored when timeouts are disabled). All devices are ended at teardown.
+    """
     started = []
 
-    def start(scenario, **options):
+    def start(scenario, *, drop=0, timeout=None, **options):
         stderr_path = tmp_path / f'device{len(started)}.stderr'
-        device = harness.NativeDevice(device_binary, scenario, options, device_timeout, stderr_path)
+        deadline = device_timeout if timeout is None or device_timeout is None else timeout
+        device = harness.NativeDevice(device_binary, scenario, options, deadline, stderr_path, drop=drop)
         started.append(device)
         return device
 

@@ -3,9 +3,18 @@
 import argparse
 import logging
 import os
+import time
 import leancom
 from pysatl import Utils
 import serial
+
+
+def pulse_dtr(port):
+    """Pulse the DTR line of a serial port, to reset a board whose reset input is wired to it."""
+    port.dtr = True
+    time.sleep(0.1)
+    port.dtr = False
+    time.sleep(0.1)
 
 
 def main():
@@ -14,6 +23,11 @@ def main():
     parser = argparse.ArgumentParser(scriptname)
     levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
     parser.add_argument('--log-level', default='INFO', choices=levels)
+    parser.add_argument(
+        '--reset-dtr',
+        action='store_true',
+        help='pulse the DTR line before synchronizing, to reset a board whose reset input is wired to it',
+    )
     parser.add_argument('device', help='Path to the serial device', type=str)
     parser.add_argument('commands', help='rx<n bytes> or tx<hex data>', nargs='*', type=str)
 
@@ -27,7 +41,7 @@ def main():
 
     with serial.Serial(args.device) as ser:
         device = leancom.Device(device=ser)
-        device.synchronize()
+        device.synchronize(reset=(lambda: pulse_dtr(ser)) if args.reset_dtr else None)
         for command in args.commands:
             logging.debug(command)
             action = command[:2]

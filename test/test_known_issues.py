@@ -7,51 +7,9 @@ the strict xfail reports a failure, and the marker is to be removed.
 import subprocess
 
 import pytest
-from harness import DeviceTimeoutError, compile_c
+from harness import compile_c
 
 pytestmark = pytest.mark.native
-
-QUERY = bytes.fromhex('00112233')
-ANSWER = bytes.fromhex('ffeeddcc')
-
-
-def run_basic(device):
-    device.host.synchronize()
-    device.host.tx(QUERY)
-    assert device.host.rx(4) == ANSWER
-    assert device.wait() == 0
-
-
-@pytest.mark.needs_timeout
-@pytest.mark.xfail(
-    strict=True,
-    raises=DeviceTimeoutError,
-    reason='ISSUES.md #1: a stale byte from the device makes the synchronization loop forever',
-)
-def test_sync_with_stale_byte_from_device(native_device):
-    run_basic(native_device('basic', garbage=1))
-
-
-@pytest.mark.needs_timeout
-@pytest.mark.xfail(
-    strict=True,
-    raises=DeviceTimeoutError,
-    reason='ISSUES.md #1: a stale byte from the host makes the synchronization loop forever',
-)
-def test_sync_with_stale_byte_from_host(native_device):
-    device = native_device('basic')
-    device.transport.write(b'\x55')
-    run_basic(device)
-
-
-@pytest.mark.needs_timeout
-@pytest.mark.xfail(
-    strict=True, raises=DeviceTimeoutError, reason='ISSUES.md #1: two lost bytes make both sides wait forever'
-)
-def test_sync_with_two_lost_device_bytes(native_device):
-    device = native_device('basic')
-    assert device.transport.read(2) == b'\xbc\x02'
-    run_basic(device)
 
 
 @pytest.mark.xfail(

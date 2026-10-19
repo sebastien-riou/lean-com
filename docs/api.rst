@@ -5,3 +5,5 @@ API reference
 
 .. autoclass:: leancom.Device
    :members:
+
+.. autoexception:: leancom.DeviceRestartedError

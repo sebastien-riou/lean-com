@@ -1,52 +1,192 @@
 """leancom.Device against a scripted transport: no device, no C compiler. Bytes come from docs/protocol.rst."""
 
 import pytest
-from harness import MAGIC, SYNC, FakeLink
+import syncsim
+from harness import ACK, GO, HELLO, MAGIC, FakeLink
 
-from leancom import Device
+from leancom import Device, DeviceRestartedError, cli
 
-HELLO = b'hello world!\n'  # 13 bytes: print packet 0x8D
+GREETING = b'hello world!\n'  # 13 bytes: print packet 0x8D
 QUERY = bytes.fromhex('00112233')
 ANSWER = bytes.fromhex('ffeeddcc')
+SID = b'\x12\x34'  # the session id, imposed so that the scripted bytes are known
 
 
-def nominal_sync_log():
-    """The reads and writes of a nominal synchronization, in order."""
-    log = []
-    for byte in MAGIC:
-        log += [('w', bytes([byte])), ('r', bytes([byte]))]
-    return [*log, ('r', b'\x01'), ('w', b'\x01')]
+class AnsweringLink(FakeLink):
+    """Plays a device waiting for the magic: answers it with ACK and the id it carried."""
+
+    def read(self, size=1):
+        if not self.incoming and self.written[-8:-2] == MAGIC:
+            self.incoming += ACK + self.written[-2:]
+        return super().read(size)
 
 
 # synchronization
 
 
 def test_sync_nominal():
-    link = FakeLink(SYNC)
-    Device(link).synchronize()
-    assert link.written == SYNC
+    link = FakeLink(ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == MAGIC + SID + GO
     assert not link.incoming
-    assert link.log == nominal_sync_log()
+    assert link.log == [('w', MAGIC + SID), *[('r', bytes([b])) for b in ACK + SID], ('w', GO)]
 
 
-def test_sync_recovers_lost_device_byte():
-    """The host receives each magic byte one step late, and sends the last one without waiting."""
-    link = FakeLink(SYNC[1:])
-    Device(link).synchronize()
-    assert link.written == SYNC
-    assert link.log[-5:] == [('w', b'\x44'), ('r', b'\xf2'), ('w', b'\xf2'), ('r', b'\x01'), ('w', b'\x01')]
+def test_sync_hello_then_ack():
+    """The device started after the host: its HELLO makes the host send MAGIC again."""
+    link = FakeLink(HELLO + ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == (MAGIC + SID) * 2 + GO
+    assert link.log[9] == ('w', MAGIC + SID)  # right after the last byte of HELLO
 
 
-def test_sync_restarts_on_mismatch():
-    link = FakeLink(MAGIC[:2] + b'\x55' + SYNC)
-    Device(link).synchronize()
-    assert link.written == MAGIC[:3] + SYNC
+def test_sync_skips_stale_bytes_and_partial_frames():
+    link = FakeLink(b'\x55' * 20 + HELLO[:5] + ACK[:5] + MAGIC + GO + ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == MAGIC + SID + GO
+    assert not link.incoming
 
 
-def test_sync_answers_zero_until_one():
-    link = FakeLink(MAGIC + b'\x55\x01')
-    Device(link).synchronize()
-    assert link.written == MAGIC + b'\x00\x01'
+def test_sync_two_hellos():
+    link = FakeLink(HELLO + HELLO + ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == (MAGIC + SID) * 3 + GO
+
+
+@pytest.mark.parametrize('incoming', [HELLO[3:] + ACK + SID, b'\x55' + HELLO[-1:] + ACK + SID], ids=['tail', 'byte'])
+def test_sync_resends_magic_on_last_byte_of_hello(incoming):
+    """A HELLO truncated by the opening of the port still triggers a new MAGIC; a spurious copy is harmless."""
+    link = FakeLink(incoming)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == (MAGIC + SID) * 2 + GO
+
+
+def test_sync_ignores_ack_with_foreign_id():
+    link = FakeLink(ACK + b'\xff\xff' + ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.written == (MAGIC + SID) * 2 + GO
+
+
+def test_sync_leaves_bytes_after_ack():
+    link = FakeLink(ACK + SID + b'\x8d' + GREETING)
+    Device(link).synchronize(session_id=SID)
+    assert link.incoming == b'\x8d' + GREETING
+
+
+def test_sync_rejects_empty_read():
+    class Silent(FakeLink):
+        def read(self, size=1):
+            return b''
+
+    with pytest.raises(RuntimeError, match='no data'):
+        Device(Silent()).synchronize(session_id=SID)
+
+
+def test_sync_session_id():
+    link = FakeLink(ACK + SID)
+    device = Device(link)
+    with pytest.raises(ValueError):
+        device.synchronize(session_id=b'\x01')
+    assert link.log == []
+    device.synchronize(session_id=SID)
+    assert device.session_id == SID
+
+
+def test_sync_draws_a_random_session_id():
+    link = AnsweringLink()
+    device = Device(link)
+    device.synchronize()
+    assert len(device.session_id) == Device.SESSION_ID_SIZE
+    assert link.written == MAGIC + device.session_id + GO
+
+
+def test_sync_reset_hook_runs_before_any_byte():
+    link = FakeLink(ACK + SID)
+    Device(link).synchronize(reset=lambda: link.log.append(('reset',)), session_id=SID)
+    assert link.log[:2] == [('reset',), ('w', MAGIC + SID)]
+
+
+def test_sync_flushes_the_input_when_the_transport_can():
+    class FlushingLink(FakeLink):
+        def __init__(self, stale, live):
+            super().__init__(stale)
+            self.live = live
+
+        def reset_input_buffer(self):
+            self.log.append(('flush',))
+            self.incoming = bytearray(self.live)
+
+    link = FlushingLink(b'\x55' * 3 + ACK + b'\x00\x00', ACK + SID)
+    Device(link).synchronize(session_id=SID)
+    assert link.log[:2] == [('flush',), ('w', MAGIC + SID)]
+    assert link.written == MAGIC + SID + GO
+
+
+def test_sync_constants():
+    """The frames of docs/protocol.rst, and the properties that make the window matching unambiguous."""
+    patterns = {'HELLO': HELLO, 'MAGIC': MAGIC, 'ACK': ACK, 'GO': GO}
+    assert (Device.HELLO, Device.MAGIC, Device.ACK, Device.GO) == (HELLO, MAGIC, ACK, GO)
+    assert (syncsim.HELLO, syncsim.MAGIC, syncsim.ACK, syncsim.GO) == (HELLO, MAGIC, ACK, GO)
+    assert Device.SESSION_ID_SIZE == 2
+    assert [len(p) for p in patterns.values()] == [8, 6, 6, 8]
+    for p in patterns.values():
+        assert len(set(p)) == len(p), 'distinct bytes'
+        assert p[0] != 0, 'the zeroed initial window must not match'
+        assert any(b >= 0x80 for b in p), 'stale ASCII text must not match'
+        assert all(p[:k] != p[-k:] for k in range(1, len(p))), 'no border'
+    assert HELLO[-1] not in ACK
+    assert HELLO[0] & 0xC0 == 0xC0, 'an invalid packet header, to detect a restarted device'
+    assert not any(b in b'\r\n\x03\x04\x11\x13\x1a\x1c\x7f' for b in HELLO), 'no tty special byte'
+
+    # No frame is recognized at a wrong position inside what a side can receive, whatever the id (wildcards)
+    wild = [None, None]
+    frames = {'HELLO': list(HELLO), 'MAGIC': list(MAGIC) + wild, 'ACK': list(ACK) + wild, 'GO': list(GO)}
+
+    def stream(*names):
+        data, starts = [], {}
+        for name in names:
+            starts[len(data)] = name
+            data += frames[name]
+        return data, starts
+
+    sequences = [('MAGIC', 'MAGIC', 'GO'), ('HELLO', 'ACK', 'ACK')] + [(a, b) for a in frames for b in frames]
+    for names in sequences:
+        data, starts = stream(*names)
+        for i in range(len(data)):
+            for name, pattern in patterns.items():
+                window = data[i : i + len(pattern)]
+                if len(window) == len(pattern) and all(
+                    w is None or w == p for w, p in zip(window, pattern, strict=True)
+                ):
+                    assert starts.get(i) == name, f'{name} would be recognized at offset {i} of {names}'
+
+
+def test_simulation_random_campaign():
+    """The in-memory model of both state machines, over random stale bytes, losses, resets and restarts."""
+    stats = syncsim.campaign(seed=1, cases=3000)
+    assert stats.get('unexpected', 0) == 0, stats
+    assert stats['ok'] > 2500, stats
+
+
+def test_pulse_dtr(monkeypatch):
+    class Port:
+        def __init__(self):
+            self.levels = []
+
+        @property
+        def dtr(self):
+            return self.levels[-1]
+
+        @dtr.setter
+        def dtr(self, level):
+            self.levels.append(level)
+
+    sleeps = []
+    monkeypatch.setattr(cli.time, 'sleep', sleeps.append)
+    port = Port()
+    cli.pulse_dtr(port)
+    assert port.levels == [True, False]
+    assert sleeps == [0.1, 0.1]
 
 
 # rx_packet
@@ -60,8 +200,8 @@ def test_rx_packet_tx_req(header, size):
 
 
 def test_rx_packet_print():
-    link = FakeLink(b'\x8d' + HELLO)
-    assert Device(link).rx_packet() == (Device.PRINT, HELLO)
+    link = FakeLink(b'\x8d' + GREETING)
+    assert Device(link).rx_packet() == (Device.PRINT, GREETING)
     assert not link.incoming
 
 
@@ -77,6 +217,16 @@ def test_rx_packet_rejects_host_to_device_header(header):
     link = FakeLink(bytes([header]) + bytes(63))
     with pytest.raises(RuntimeError, match=f'Received an invalid header: 0x{header:02x}'):
         Device(link).rx_packet()
+
+
+def test_rx_packet_detects_a_restarted_device():
+    with pytest.raises(DeviceRestartedError):
+        Device(FakeLink(HELLO)).rx_packet()
+
+
+def test_rx_packet_rejects_hello_header_without_hello():
+    with pytest.raises(RuntimeError, match='Received an invalid header: 0xda'):
+        Device(FakeLink(b'\xda' + bytes(7))).rx_packet()
 
 
 # tx
@@ -109,7 +259,7 @@ def test_tx_empty_returns_without_reading():
 
 
 def test_tx_displays_prints(capsys):
-    link = FakeLink(b'\x8d' + HELLO + b'\x44')
+    link = FakeLink(b'\x8d' + GREETING + b'\x44')
     Device(link).tx(QUERY)
     assert capsys.readouterr().out == 'hello world!\n'
 
