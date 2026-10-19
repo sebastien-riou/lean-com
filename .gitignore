@@ -217,3 +217,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Results of renode-test, from examples/basic/testit
+examples/basic/robot_output.xml
+examples/basic/log.html
+examples/basic/report.html

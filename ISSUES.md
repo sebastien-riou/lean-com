@@ -20,8 +20,9 @@ corrupts data, **Low** is minor or affects tooling only.
 | 9  | `buildit_env` and `testit_env` call a missing script      | Medium   | yes    |
 | 10 | The example's `Pipfile` is invalid                        | Medium   | yes    |
 | 11 | VS Code configurations refer to missing items             | Low      | yes    |
-| 12 | The Renode test waits for output the firmware never sends | Low      | no     |
-| 13 | Leftovers from the project template                       | Low      | partly |
+| 12 | The Renode test waits for output the firmware never sends | Low      | yes    |
+| 13 | Leftovers from the project template                       | Low      | yes    |
+| 14 | The LiteX firmware does not link with `printf`            | Low      | no     |
 
 ## Protocol and libraries
 
@@ -182,29 +183,52 @@ labelled `Build application`, which did not exist (the build tasks are *Build U5
 **Fix:** each Renode task depends on its matching build task, and the launch
 configuration points to `examples/basic/`.
 
-### 12. The Renode test waits for output the firmware never sends (Low)
+### 12. The Renode test waits for output the firmware never sends (Low, fixed)
 
 **Where:** [examples/basic/mytest.robot](examples/basic/mytest.robot).
 
-**What happens:** the test waits up to 10 seconds for a line `END` on the device's
+**What happened:** the test waited up to 10 seconds for a line `END` on the device's
 UART. The firmware never prints `END`. Moreover, with no host on the link, the
-firmware blocks in `leancom_synchronize()`. This was found by reading the code; the
-test was not run.
+firmware blocked in `leancom_synchronize()`. This was found by reading the code.
 
-**Fix:** have the test play the host, for example by connecting `leancom` to the
-Renode pseudo-terminal, and check the host's output instead.
+**Fix:** the test plays the host. It connects the UART to a pseudo-terminal, runs the
+`leancom` command line tool on it, and checks its output against the session of the
+README, once with the device started first and once with the host started first.
+`HOST_TIMEOUT` (60 s) limits the host session; `--variable HOST_TIMEOUT:none` removes the
+limit. `testit` passes its extra arguments to `renode-test`, and builds the LiteX
+firmware without `printf` so that it gets to the test (see #14).
 
-**Status:** open. Such a test has to be designed and checked against Renode.
+**How it was checked:** both cases pass in Renode 1.16.0 (`pipenv install`, then
+`pipenv run ./testit debug` in `examples/basic`), the LiteX case being skipped. Before
+that, the test ran under Robot Framework 6.1 with a stand-in for the Renode keywords: it
+passed repeatedly with both handshake orders, and a device that never starts made both
+cases fail after `HOST_TIMEOUT` with the host's log in the message.
 
-### 13. Leftovers from the project template (Low, partly fixed)
+### 13. Leftovers from the project template (Low, fixed)
 
 Fixed: `hatch.toml` named a package `usbman`, `__main__.spec` named the PyInstaller
 executable `usbman`, isort's `known-first-party` in `pyproject.toml` was `hdrbg`, the
 project URLs pointed to `github.com/sebastien-riou/leancom` instead of `lean-com`, and a
 comment in `buildit` referred to a GitHub workflow that does not exist. The empty author
-email in `pyproject.toml` was removed: an author entry needs only a name.
+email in `pyproject.toml` was removed: an author entry needs only a name. The unused
+`examples/basic/expected_output.txt` (the text of *Le Petit Prince*) and its checksum
+file were deleted (commit 650451f).
 
-Left as they are:
+### 14. The LiteX firmware does not link with `printf` (Low)
 
-- `examples/basic/expected_output.txt` (the text of *Le Petit Prince*) and its checksum
-  file are not used anywhere; their purpose is unknown.
+**Where:** [examples/basic/target/litex/](examples/basic/target/litex/), with `HAS_PRINTF=1`,
+the default of [examples/basic/CMakeLists.txt](examples/basic/CMakeLists.txt).
+
+**What happens:** since `printf` was added to the example, newlib's stdio needs the system
+calls `_write`, `_read`, `_sbrk`, `_fstat`, `_isatty`, `_lseek` and `_close`, which the LiteX
+target does not provide (the STM32 target has them in `syscall.c` and `sysmem.c`). The
+link fails, which stopped `testit` before it ran the Renode test. Built with
+`-DHAS_PRINTF=0`, the LiteX firmware links. Found with the xPack RISC-V toolchain 15.2.0.
+
+**Mitigation:** `testit` builds the LiteX firmware with `-DHAS_PRINTF=0`; its test case is
+skipped anyway.
+
+**Possible fix:** give the LiteX target system calls like the STM32 ones (`_write` calling
+`__io_putchar`, `_sbrk` on the RAM after `_ebss`, stubs for the others), then build it with
+`printf` again and enable its test case, whose expected output includes the `printf` line.
+
